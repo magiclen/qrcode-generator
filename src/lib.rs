@@ -1,15 +1,23 @@
 pub extern crate qrcodegen;
 pub extern crate htmlescape;
 pub extern crate image;
+pub extern crate rc_writer;
 
 #[cfg(feature = "validator")]
 pub extern crate validators;
 
 use std::io::{self, Write, ErrorKind};
 
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::fs::{self, File};
+use std::path::Path;
+
 use qrcodegen::{QrCode, QrCodeEcc};
 
 use image::{ImageBuffer, Luma, png::PNGEncoder, ColorType};
+
+use rc_writer::RcOptionWriter;
 
 #[cfg(feature = "validator")]
 use validators::http_url::HttpUrl;
@@ -114,8 +122,8 @@ pub fn to_matrix<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<Vec<Vec<bool
     Ok(rows)
 }
 
-/// Encode data to a QR code SVG image.
-pub fn to_svg<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>) -> Result<String, io::Error> {
+/// Encode data to a SVG image via any writer.
+pub fn to_svg<D: AsRef<[u8]>, W: Write>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>, mut writer: W) -> Result<(), io::Error> {
     let margin_size = 1;
 
     let qr = match QrCode::encode_binary(data.as_ref(), ecc) {
@@ -139,45 +147,45 @@ pub fn to_svg<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize, description:
 
     let size = size.to_string();
 
-    let mut sb = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+    writer.write(b"<?xml version=\"1.0\" encoding=\"utf-8\"?>")?;
 
-    sb.push_str("<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"");
+    writer.write(b"<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"")?;
 
-    sb.push_str(&size);
+    writer.write(size.as_bytes())?;
 
-    sb.push_str("\" height=\"");
+    writer.write(b"\" height=\"")?;
 
-    sb.push_str(&size);
+    writer.write(size.as_bytes())?;
 
-    sb.push_str("\">");
+    writer.write(b"\">")?;
 
     match description {
         Some(description) => {
             if !description.is_empty() {
-                sb.push_str("<desc>");
-                sb.push_str(&htmlescape::encode_minimal(description));
-                sb.push_str("</desc>");
+                writer.write(b"<desc>")?;
+                writer.write(htmlescape::encode_minimal(description).as_bytes())?;
+                writer.write(b"</desc>")?;
             }
         }
         None => {
-            sb.push_str("<desc>");
-            sb.push_str(env!("CARGO_PKG_NAME"));
-            sb.push(' ');
-            sb.push_str(env!("CARGO_PKG_VERSION"));
-            sb.push_str(" by magiclen.org");
-            sb.push_str("</desc>");
+            writer.write(b"<desc>")?;
+            writer.write(env!("CARGO_PKG_NAME").as_bytes())?;
+            writer.write(b" ")?;
+            writer.write(env!("CARGO_PKG_VERSION").as_bytes())?;
+            writer.write(b" by magiclen.org")?;
+            writer.write(b"</desc>")?;
         }
     }
 
-    sb.push_str("<rect width=\"");
+    writer.write(b"<rect width=\"")?;
 
-    sb.push_str(&size);
+    writer.write(size.as_bytes())?;
 
-    sb.push_str("\" height=\"");
+    writer.write(b"\" height=\"")?;
 
-    sb.push_str(&size);
+    writer.write(size.as_bytes())?;
 
-    sb.push_str("\" fill=\"#FFFFFF\" cx=\"0\" cy=\"0\" />");
+    writer.write(b"\" fill=\"#FFFFFF\" cx=\"0\" cy=\"0\" />")?;
 
     let point_size_string = point_size.to_string();
 
@@ -187,30 +195,57 @@ pub fn to_svg<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize, description:
                 let x = j as usize * point_size + margin;
                 let y = i as usize * point_size + margin;
 
-                sb.push_str("<rect x=\"");
-                sb.push_str(&x.to_string());
+                writer.write(b"<rect x=\"")?;
+                writer.write(x.to_string().as_bytes())?;
 
-                sb.push_str("\" y=\"");
-                sb.push_str(&y.to_string());
+                writer.write(b"\" y=\"")?;
+                writer.write(y.to_string().as_bytes())?;
 
-                sb.push_str("\" width=\"");
-                sb.push_str(&point_size_string);
+                writer.write(b"\" width=\"")?;
+                writer.write(point_size_string.as_bytes())?;
 
-                sb.push_str("\" height=\"");
-                sb.push_str(&point_size_string);
+                writer.write(b"\" height=\"")?;
+                writer.write(point_size_string.as_bytes())?;
 
-                sb.push_str("\" fill=\"#000000\" shape-rendering=\"crispEdges\" />");
+                writer.write(b"\" fill=\"#000000\" shape-rendering=\"crispEdges\" />")?;
             }
         }
     }
 
-    sb.push_str("</svg>");
+    writer.write(b"</svg>")?;
 
-    Ok(sb)
+    writer.flush()?;
+
+    Ok(())
 }
 
-/// Encode data to a Vec instance.
-pub fn to_vec<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
+/// Encode data to a SVG image in memory.
+pub fn to_svg_to_string<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>) -> Result<String, io::Error> {
+    let temp = RefCell::new(Some(Vec::new()));
+
+    let temp_rc = Rc::new(temp);
+
+    to_svg(data, ecc, size, description, RcOptionWriter::new(temp_rc.clone()))?;
+
+    let svg = temp_rc.borrow_mut().take().unwrap();
+
+    Ok(unsafe { String::from_utf8_unchecked(svg) })
+}
+
+/// Encode data to a SVG image via a file path.
+pub fn to_svg_to_file<D: AsRef<[u8]>, P: AsRef<Path>>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>, path: P) -> Result<(), io::Error> {
+    let path = path.as_ref();
+
+    let file = File::create(path)?;
+
+    to_svg(data, ecc, size, description, file).map_err(|err| {
+        if let Err(_) = fs::remove_file(path) {}
+        err
+    })
+}
+
+/// Encode data to image data stored in a Vec instance.
+pub fn to_image<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
     let margin_size = 1;
 
     let qr = match QrCode::encode_binary(data.as_ref(), ecc) {
@@ -257,27 +292,52 @@ pub fn to_vec<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<Ve
 
 /// Encode data to a image buffer.
 pub fn to_image_buffer<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, io::Error> {
-    let img_raw = to_vec(data, ecc, size)?;
+    let img_raw = to_image(data, ecc, size)?;
 
     let img: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::from_vec(size as u32, size as u32, img_raw).unwrap();
 
     Ok(img)
 }
 
-/// Encode data to a PNG image.
+/// Encode data to a PNG image via any writer.
 pub fn to_png<D: AsRef<[u8]>, W: Write>(data: D, ecc: QrCodeEcc, size: usize, writer: W) -> Result<(), io::Error> {
-    let img_raw = to_vec(data, ecc, size)?;
+    let img_raw = to_image(data, ecc, size)?;
 
     let encoder = PNGEncoder::new(writer);
 
     encoder.encode(&img_raw, size as u32, size as u32, ColorType::Gray(8))
 }
 
+/// Encode data to a PNG image in memory.
+pub fn to_png_to_vec<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
+    let temp = RefCell::new(Some(Vec::new()));
+
+    let temp_rc = Rc::new(temp);
+
+    to_png(data, ecc, size, RcOptionWriter::new(temp_rc.clone()))?;
+
+    let png = temp_rc.borrow_mut().take().unwrap();
+
+    Ok(png)
+}
+
+/// Encode data to a PNG image via a file path.
+pub fn to_png_to_file<D: AsRef<[u8]>, P: AsRef<Path>>(data: D, ecc: QrCodeEcc, size: usize, path: P) -> Result<(), io::Error> {
+    let path = path.as_ref();
+
+    let file = File::create(path)?;
+
+    to_png(data, ecc, size, file).map_err(|err| {
+        if let Err(_) = fs::remove_file(path) {}
+        err
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::fs::{self, File};
+    use std::fs;
 
     #[cfg(feature = "validator")]
     use validators::{ValidatorOption, http_url::HttpUrlValidator};
@@ -362,17 +422,27 @@ mod tests {
     }
 
     #[test]
-    fn text_to_svg() {
-        let result = to_svg("Hello world!", QrCodeEcc::Low, 256, Some("")).unwrap();
+    fn text_to_svg_to_string() {
+        let result = to_svg_to_string("Hello world!", QrCodeEcc::Low, 256, Some("")).unwrap();
 
         assert_eq!(fs::read_to_string("tests/data/hello.svg").unwrap(), result);
     }
 
     #[test]
-    fn text_to_png() {
-        let file = File::create("tests/data/hello_output.png").unwrap();
+    fn text_to_svg_to_file() {
+        to_svg_to_file("Hello world!", QrCodeEcc::Low, 256, Some(""), "tests/data/hello_output.svg").unwrap();
 
-        to_png("Hello world!", QrCodeEcc::Low, 256, file).unwrap();
+        assert_eq!(fs::read("tests/data/hello.svg").unwrap(), fs::read("tests/data/hello_output.svg").unwrap());
+    }
+
+    #[test]
+    fn text_to_png_to_vec() {
+        assert_eq!(fs::read("tests/data/hello.png").unwrap(), to_png_to_vec("Hello world!", QrCodeEcc::Low, 256).unwrap());
+    }
+
+    #[test]
+    fn text_to_png_to_file() {
+        to_png_to_file("Hello world!", QrCodeEcc::Low, 256, "tests/data/hello_output.png").unwrap();
 
         assert_eq!(fs::read("tests/data/hello.png").unwrap(), fs::read("tests/data/hello_output.png").unwrap());
     }
