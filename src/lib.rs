@@ -1,7 +1,153 @@
+//! This crate provides functions to generate QR Code matrices and images in RAW, PNG and SVG formats.
+//!
+//! ## Examples
+//!
+//! ### Encode any data to a QR Code matrix which is `Vec<Vec<bool>>`.
+//!
+//! ```
+//! extern crate qrcode_generator;
+//!
+//! use qrcode_generator::QrCodeEcc;
+//!
+//! let result: Vec<Vec<bool>> = qrcode_generator::to_matrix("Hello world!", QrCodeEcc::Low).unwrap();
+//!
+//! println!("{:?}", result);
+//! ```
+//!
+//! ### Encode any data to a PNG image stored in a Vec instance.
+//!
+//! ```
+//! extern crate qrcode_generator;
+//!
+//! use qrcode_generator::QrCodeEcc;
+//!
+//! let result: Vec<u8> = qrcode_generator::to_png_to_vec("Hello world!", QrCodeEcc::Low, 1024).unwrap();
+//!
+//! println!("{:?}", result);
+//! ```
+//!
+//! ### Encode any data to a PNG image stored in a file.
+//!
+//! ```ignore
+//! extern crate qrcode_generator;
+//!
+//! use qrcode_generator::QrCodeEcc;
+//!
+//! qrcode_generator::to_png_to_file("Hello world!", QrCodeEcc::Low, 1024, "path/to/file.png").unwrap();
+//! ```
+//!
+//! ### Encode any data to a SVG image stored in a String instance.
+//!
+//! ```
+//! extern crate qrcode_generator;
+//!
+//! use qrcode_generator::QrCodeEcc;
+//!
+//! let result: String = qrcode_generator::to_svg_to_string("Hello world!", QrCodeEcc::Low, 1024, None).unwrap();
+//!
+//! println!("{:?}", result);
+//! ```
+//!
+//! ### Encode any data to a SVG image stored in a file.
+//!
+//! ```ignore
+//! extern crate qrcode_generator;
+//!
+//! use qrcode_generator::QrCodeEcc;
+//!
+//! qrcode_generator::to_svg_to_file("Hello world!", QrCodeEcc::Low, 1024, None, "path/to/file.svg").unwrap();
+//! ```
+//!
+//! ## Low-level Usage
+//!
+//! ### Raw Image Data
+//!
+//! The `to_image` and `to_image_buffer` functions can be used, if you want to modify your image.
+//!
+//! ### Segments
+//!
+//! Every **generate** and **to** function has its own **by_segments** function. You can concatenate segments by using different encoding methods, such as **numeric**, **alphanumeric** or **binary** to reduce the size (level) of your QR code matrix/image.
+//!
+//! ```
+//! extern crate qrcode_generator;
+//!
+//! use qrcode_generator::QrCodeEcc;
+//! use qrcode_generator::qrcodegen::QrSegment;
+//!
+//! let first = "1234567";
+//!
+//! let second = "ABCDEFG";
+//!
+//! let first_chars: Vec<char> = first.chars().collect();
+//! let second_chars: Vec<char> = second.chars().collect();
+//!
+//! let segments = vec![QrSegment::make_numeric(&first_chars), QrSegment::make_alphanumeric(&second_chars)];
+//!
+//! let result: Vec<Vec<bool>> = qrcode_generator::to_matrix_by_segments(&segments, QrCodeEcc::Low).unwrap();
+//!
+//! println!("{:?}", result);
+//! ```
+//!
+//! ### Optimized URL segments
+//!
+//! URL is a common type of data used in QR code. The protocol and the scheme of a URL is case-insensitive, so they can be converted to a upper-case segment and encoded by **alphanumeric** instead of **binary** to reduce the size.
+//!
+//! You can use the `optimize_url_segments` function to create URL segments.
+//!
+//! ```
+//! extern crate qrcode_generator;
+//!
+//! use qrcode_generator::QrCodeEcc;
+//!
+//!
+//! let url = "https://magiclen.org/path/to/12345";
+//!
+//! let matrix_1 = qrcode_generator::to_matrix(url, QrCodeEcc::Low).unwrap();
+//! let matrix_2 = qrcode_generator::to_matrix_by_segments(&qrcode_generator::optimize_url_segments(url), QrCodeEcc::Low).unwrap();
+//!
+//! assert!(matrix_2.len() < matrix_1.len());
+//! ```
+//!
+//! ### Validators Support
+//!
+//! `Validators` is a crate which can help you validate user input.
+//!
+//! To use with Validators support, you have to enable the **validator** feature for this crate.
+//!
+//! ```ignore
+//! [dependencies.qrcode-generator]
+//! version = "*"
+//! features = ["validator"]
+//! ```
+//!
+//! And the `optimize_validated_http_url_segments` function is available.
+//!
+//! ```ignore
+//! extern crate qrcode_generator;
+//! extern crate validators;
+//!
+//! use qrcode_generator::QrCodeEcc;
+//! use validators::{ValidatorOption, http_url::HttpUrlValidator};
+//!
+//! let validator = HttpUrlValidator {
+//!     protocol: ValidatorOption::Allow,
+//!     local: ValidatorOption::Allow,
+//! };
+//!
+//! let url = "https://magiclen.org/path/to/12345";
+//!
+//! let validated_http_url = validator.parse_str(url).unwrap();
+//!
+//! let matrix_1 = qrcode_generator::to_matrix(url, QrCodeEcc::Low).unwrap();
+//! let matrix_2 = qrcode_generator::to_matrix_by_segments(&qrcode_generator::optimize_validated_http_url_segments(&validated_http_url), QrCodeEcc::Low).unwrap();
+//!
+//! assert!(matrix_2.len() < matrix_1.len());
+//! ```
+
 pub extern crate qrcodegen;
-pub extern crate htmlescape;
-pub extern crate image;
-pub extern crate rc_writer;
+extern crate htmlescape;
+extern crate image;
+extern crate rc_writer;
 
 #[cfg(feature = "validator")]
 pub extern crate validators;
@@ -13,7 +159,9 @@ use std::cell::RefCell;
 use std::fs::{self, File};
 use std::path::Path;
 
-use qrcodegen::{QrCode, QrCodeEcc};
+use qrcodegen::{QrCode, QrSegment};
+
+pub use qrcodegen::QrCodeEcc;
 
 use image::{ImageBuffer, Luma, png::PNGEncoder, ColorType};
 
@@ -24,85 +172,108 @@ use validators::http_url::HttpUrl;
 
 #[cfg(feature = "validator")]
 /// Optimize URL text for generating QR code.
-pub fn optimize_with_validated_http_url(url: &HttpUrl) -> String {
-    let mut text = String::with_capacity(url.get_full_http_url().len());
+pub fn optimize_validated_http_url_segments(http_url: &HttpUrl) -> Vec<QrSegment> {
+    let host = http_url.get_host().get_full_host();
+    let url = http_url.get_full_http_url();
 
-    if let Some(path) = url.get_path() {
-        let a = url.get_full_http_url_without_query_and_fragment();
-        text.push_str(&a[..(a.len() - path.len())].to_uppercase());
-        text.push_str(path);
+    let first = if http_url.get_path().is_some() {
+        url[..(host.len() + 1)].to_uppercase()
     } else {
-        text.push_str(&url.get_full_http_url_without_query_and_fragment().to_uppercase());
-    }
-
-    if let Some(query) = url.get_query() {
-        text.push('?');
-        text.push_str(query);
-    }
-
-    if let Some(fragment) = url.get_fragment() {
-        text.push('#');
-        text.push_str(fragment);
-    }
-
-    text
-}
-
-/// Optimize URL text for generating QR code.
-pub fn optimize_url(url: &str) -> String {
-    let protocol_sep_index = url.find("://");
-
-    match protocol_sep_index {
-        Some(protocol_sep_index) => {
-            let next_slash_index = &url[protocol_sep_index + 3..].find("/");
-
-            match next_slash_index {
-                Some(next_slash_index) => {
-                    let next_slash_index = next_slash_index + protocol_sep_index + 3;
-                    format!("{}{}", &url[..next_slash_index].to_uppercase(), &url[next_slash_index..])
-                }
-                None => {
-                    url.to_uppercase()
-                }
-            }
-        }
-        None => {
-            url.to_string()
-        }
-    }
-}
-
-/// Optimize URL text for generating QR code.
-pub fn optimize_url_owned(url: String) -> String {
-    let protocol_sep_index = url.find("://");
-
-    match protocol_sep_index {
-        Some(protocol_sep_index) => {
-            let next_slash_index = &url[protocol_sep_index + 3..].find("/");
-
-            match next_slash_index {
-                Some(next_slash_index) => {
-                    let next_slash_index = next_slash_index + protocol_sep_index + 3;
-                    format!("{}{}", &url[..next_slash_index].to_uppercase(), &url[next_slash_index..])
-                }
-                None => {
-                    url.to_uppercase()
-                }
-            }
-        }
-        None => {
-            url
-        }
-    }
-}
-
-/// Encode data to a QR code matrix.
-pub fn to_matrix<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<Vec<Vec<bool>>, &'static str> {
-    let qr = match QrCode::encode_binary(data.as_ref(), ecc) {
-        Some(qr) => qr,
-        None => return Err("The data is too long!")
+        url[..host.len()].to_uppercase()
     };
 
+    let first_chars: Vec<char> = first.chars().collect();
+
+    let mut out = QrSegment::make_segments(&first_chars);
+
+    let second = &url[first.len()..];
+
+    let second_chars: Vec<char> = second.chars().collect();
+
+    out.extend_from_slice(&QrSegment::make_segments(&second_chars));
+
+    out
+}
+
+/// Optimize URL text for generating QR code.
+pub fn optimize_url_segments<S: AsRef<str>>(url: S) -> Vec<QrSegment> {
+    let url: &str = url.as_ref();
+
+    let protocol_sep_index = url.find("://");
+
+    match protocol_sep_index {
+        Some(protocol_sep_index) => {
+            let next_slash_index = &url[protocol_sep_index + 3..].find("/");
+
+            match next_slash_index {
+                Some(next_slash_index) => {
+                    let next_slash_index = next_slash_index + protocol_sep_index + 4;
+
+                    let first = url[..next_slash_index].to_uppercase();
+
+                    let first_chars: Vec<char> = first.chars().collect();
+
+                    let mut out = QrSegment::make_segments(&first_chars);
+
+                    let second = &url[next_slash_index..];
+
+                    let second_chars: Vec<char> = second.chars().collect();
+
+                    out.extend_from_slice(&QrSegment::make_segments(&second_chars));
+
+                    out
+                }
+                None => {
+                    let chars: Vec<char> = url.to_uppercase().chars().collect();
+
+                    QrSegment::make_segments(&chars)
+                }
+            }
+        }
+        None => {
+            let chars: Vec<char> = url.chars().collect();
+
+            QrSegment::make_segments(&chars)
+        }
+    }
+}
+
+#[inline]
+fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, io::Error> {
+    let data = data.as_ref();
+
+    let tried_utf8 = String::from_utf8(data.to_vec());
+
+    match tried_utf8 {
+        Ok(text) => {
+            let qr = match QrCode::encode_text(text.as_str(), ecc) {
+                Some(qr) => qr,
+                None => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+            };
+
+            Ok(qr)
+        }
+        Err(_) => {
+            let qr = match QrCode::encode_binary(data, ecc) {
+                Some(qr) => qr,
+                None => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+            };
+
+            Ok(qr)
+        }
+    }
+}
+
+#[inline]
+fn generate_qrcode_by_segments(segments: &[QrSegment], ecc: QrCodeEcc) -> Result<QrCode, io::Error> {
+    match QrCode::encode_segments(segments, ecc) {
+        Some(qr) => Ok(qr),
+        None => Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+    }
+}
+
+#[inline]
+fn to_matrix_inner(qr: QrCode) -> Vec<Vec<bool>> {
     let size = qr.size();
 
     let size_u = size as usize;
@@ -119,17 +290,22 @@ pub fn to_matrix<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<Vec<Vec<bool
         rows.push(row);
     }
 
-    Ok(rows)
+    rows
 }
 
-/// Encode data to a SVG image via any writer.
-pub fn to_svg<D: AsRef<[u8]>, W: Write>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>, mut writer: W) -> Result<(), io::Error> {
-    let margin_size = 1;
+/// Encode data to a QR code matrix.
+pub fn to_matrix<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<Vec<Vec<bool>>, io::Error> {
+    Ok(to_matrix_inner(generate_qrcode(data, ecc)?))
+}
 
-    let qr = match QrCode::encode_binary(data.as_ref(), ecc) {
-        Some(qr) => qr,
-        None => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
-    };
+/// Encode data to a QR code matrix.
+pub fn to_matrix_by_segments(segments: &[QrSegment], ecc: QrCodeEcc) -> Result<Vec<Vec<bool>>, io::Error> {
+    Ok(to_matrix_inner(generate_qrcode_by_segments(segments, ecc)?))
+}
+
+#[inline]
+fn to_svg_inner<W: Write>(qr: QrCode, size: usize, description: Option<&str>, mut writer: W) -> Result<(), io::Error> {
+    let margin_size = 1;
 
     let s = qr.size();
 
@@ -219,39 +395,64 @@ pub fn to_svg<D: AsRef<[u8]>, W: Write>(data: D, ecc: QrCodeEcc, size: usize, de
     Ok(())
 }
 
-/// Encode data to a SVG image in memory.
-pub fn to_svg_to_string<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>) -> Result<String, io::Error> {
+/// Encode data to a SVG image via any writer.
+pub fn to_svg<D: AsRef<[u8]>, W: Write>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>, writer: W) -> Result<(), io::Error> {
+    to_svg_inner(generate_qrcode(data, ecc)?, size, description, writer)
+}
+
+/// Encode data to a SVG image via any writer.
+pub fn to_svg_by_segments<W: Write>(segments: &[QrSegment], ecc: QrCodeEcc, size: usize, description: Option<&str>, writer: W) -> Result<(), io::Error> {
+    to_svg_inner(generate_qrcode_by_segments(segments, ecc)?, size, description, writer)
+}
+
+#[inline]
+fn to_svg_to_string_inner(qr: QrCode, size: usize, description: Option<&str>) -> Result<String, io::Error> {
     let temp = RefCell::new(Some(Vec::new()));
 
     let temp_rc = Rc::new(temp);
 
-    to_svg(data, ecc, size, description, RcOptionWriter::new(temp_rc.clone()))?;
+    to_svg_inner(qr, size, description, RcOptionWriter::new(temp_rc.clone()))?;
 
     let svg = temp_rc.borrow_mut().take().unwrap();
 
     Ok(unsafe { String::from_utf8_unchecked(svg) })
 }
 
-/// Encode data to a SVG image via a file path.
-pub fn to_svg_to_file<D: AsRef<[u8]>, P: AsRef<Path>>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>, path: P) -> Result<(), io::Error> {
+/// Encode data to a SVG image in memory.
+pub fn to_svg_to_string<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>) -> Result<String, io::Error> {
+    to_svg_to_string_inner(generate_qrcode(data, ecc)?, size, description)
+}
+
+/// Encode data to a SVG image in memory.
+pub fn to_svg_to_string_by_segments(segments: &[QrSegment], ecc: QrCodeEcc, size: usize, description: Option<&str>) -> Result<String, io::Error> {
+    to_svg_to_string_inner(generate_qrcode_by_segments(segments, ecc)?, size, description)
+}
+
+#[inline]
+fn to_svg_to_file_inner<P: AsRef<Path>>(qr: QrCode, size: usize, description: Option<&str>, path: P) -> Result<(), io::Error> {
     let path = path.as_ref();
 
     let file = File::create(path)?;
 
-    to_svg(data, ecc, size, description, file).map_err(|err| {
+    to_svg_inner(qr, size, description, file).map_err(|err| {
         if let Err(_) = fs::remove_file(path) {}
         err
     })
 }
 
-/// Encode data to image data stored in a Vec instance.
-pub fn to_image<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
-    let margin_size = 1;
+/// Encode data to a SVG image via a file path.
+pub fn to_svg_to_file<D: AsRef<[u8]>, P: AsRef<Path>>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>, path: P) -> Result<(), io::Error> {
+    to_svg_to_file_inner(generate_qrcode(data, ecc)?, size, description, path)
+}
 
-    let qr = match QrCode::encode_binary(data.as_ref(), ecc) {
-        Some(qr) => qr,
-        None => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
-    };
+/// Encode data to a SVG image via a file path.
+pub fn to_svg_to_file_by_segments<P: AsRef<Path>>(segments: &[QrSegment], ecc: QrCodeEcc, size: usize, description: Option<&str>, path: P) -> Result<(), io::Error> {
+    to_svg_to_file_inner(generate_qrcode_by_segments(segments, ecc)?, size, description, path)
+}
+
+#[inline]
+fn to_image_inner(qr: QrCode, size: usize) -> Result<Vec<u8>, io::Error> {
+    let margin_size = 1;
 
     let s = qr.size();
 
@@ -290,47 +491,97 @@ pub fn to_image<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<
     Ok(img_raw)
 }
 
-/// Encode data to a image buffer.
-pub fn to_image_buffer<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, io::Error> {
-    let img_raw = to_image(data, ecc, size)?;
+/// Encode data to image data stored in a Vec instance.
+pub fn to_image<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
+    to_image_inner(generate_qrcode(data, ecc)?, size)
+}
+
+/// Encode data to image data stored in a Vec instance.
+pub fn to_image_by_segments(segments: &[QrSegment], ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
+    to_image_inner(generate_qrcode_by_segments(segments, ecc)?, size)
+}
+
+#[inline]
+fn to_image_buffer_inner(qr: QrCode, size: usize) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, io::Error> {
+    let img_raw = to_image_inner(qr, size)?;
 
     let img: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::from_vec(size as u32, size as u32, img_raw).unwrap();
 
     Ok(img)
 }
 
-/// Encode data to a PNG image via any writer.
-pub fn to_png<D: AsRef<[u8]>, W: Write>(data: D, ecc: QrCodeEcc, size: usize, writer: W) -> Result<(), io::Error> {
-    let img_raw = to_image(data, ecc, size)?;
+/// Encode data to a image buffer.
+pub fn to_image_buffer<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, io::Error> {
+    to_image_buffer_inner(generate_qrcode(data, ecc)?, size)
+}
+
+/// Encode data to a image buffer.
+pub fn to_image_buffer_by_segments(segments: &[QrSegment], ecc: QrCodeEcc, size: usize) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, io::Error> {
+    to_image_buffer_inner(generate_qrcode_by_segments(segments, ecc)?, size)
+}
+
+#[inline]
+fn to_png_inner<W: Write>(qr: QrCode, size: usize, writer: W) -> Result<(), io::Error> {
+    let img_raw = to_image_inner(qr, size)?;
 
     let encoder = PNGEncoder::new(writer);
 
     encoder.encode(&img_raw, size as u32, size as u32, ColorType::Gray(8))
 }
 
-/// Encode data to a PNG image in memory.
-pub fn to_png_to_vec<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
+/// Encode data to a PNG image via any writer.
+pub fn to_png<D: AsRef<[u8]>, W: Write>(data: D, ecc: QrCodeEcc, size: usize, writer: W) -> Result<(), io::Error> {
+    to_png_inner(generate_qrcode(data, ecc)?, size, writer)
+}
+
+/// Encode data to a PNG image via any writer.
+pub fn to_png_by_segments<W: Write>(segments: &[QrSegment], ecc: QrCodeEcc, size: usize, writer: W) -> Result<(), io::Error> {
+    to_png_inner(generate_qrcode_by_segments(segments, ecc)?, size, writer)
+}
+
+#[inline]
+fn to_png_to_vec_inner(qr: QrCode, size: usize) -> Result<Vec<u8>, io::Error> {
     let temp = RefCell::new(Some(Vec::new()));
 
     let temp_rc = Rc::new(temp);
 
-    to_png(data, ecc, size, RcOptionWriter::new(temp_rc.clone()))?;
+    to_png_inner(qr, size, RcOptionWriter::new(temp_rc.clone()))?;
 
     let png = temp_rc.borrow_mut().take().unwrap();
 
     Ok(png)
 }
 
-/// Encode data to a PNG image via a file path.
-pub fn to_png_to_file<D: AsRef<[u8]>, P: AsRef<Path>>(data: D, ecc: QrCodeEcc, size: usize, path: P) -> Result<(), io::Error> {
+/// Encode data to a PNG image in memory.
+pub fn to_png_to_vec<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
+    to_png_to_vec_inner(generate_qrcode(data, ecc)?, size)
+}
+
+/// Encode data to a PNG image in memory.
+pub fn to_png_to_vec_by_segments(segments: &[QrSegment], ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
+    to_png_to_vec_inner(generate_qrcode_by_segments(segments, ecc)?, size)
+}
+
+#[inline]
+fn to_png_to_file_inner<P: AsRef<Path>>(qr: QrCode, size: usize, path: P) -> Result<(), io::Error> {
     let path = path.as_ref();
 
     let file = File::create(path)?;
 
-    to_png(data, ecc, size, file).map_err(|err| {
+    to_png_inner(qr, size, file).map_err(|err| {
         if let Err(_) = fs::remove_file(path) {}
         err
     })
+}
+
+/// Encode data to a PNG image via a file path.
+pub fn to_png_to_file<D: AsRef<[u8]>, P: AsRef<Path>>(data: D, ecc: QrCodeEcc, size: usize, path: P) -> Result<(), io::Error> {
+    to_png_to_file_inner(generate_qrcode(data, ecc)?, size, path)
+}
+
+/// Encode data to a PNG image via a file path.
+pub fn to_png_to_file_by_segments<P: AsRef<Path>>(segments: &[QrSegment], ecc: QrCodeEcc, size: usize, path: P) -> Result<(), io::Error> {
+    to_png_to_file_inner(generate_qrcode_by_segments(segments, ecc)?, size, path)
 }
 
 #[cfg(test)]
@@ -342,54 +593,38 @@ mod tests {
     #[cfg(feature = "validator")]
     use validators::{ValidatorOption, http_url::HttpUrlValidator};
 
-    #[test]
-    fn text_optimize_url_lv1() {
-        assert_eq!("HTTPS://MAGICLEN.ORG", optimize_url("https://magiclen.org"));
-    }
+    #[cfg(not(windows))]
+    const FOLDER: &str = "tests/data";
+
+    #[cfg(windows)]
+    const FOLDER: &str = r"tests\data";
 
     #[test]
-    fn text_optimize_url_lv2() {
-        assert_eq!("HTTPS://MAGICLEN.ORG/path?a=10#hi", optimize_url("https://magiclen.org/path?a=10#hi"));
-    }
+    fn text_optimize_url() {
+        let url = "https://magiclen.org/path/to/12345";
 
-    #[test]
-    fn text_optimize_url_owned_lv1() {
-        let url = "https://magiclen.org".to_string();
+        let matrix_1 = to_matrix(url, QrCodeEcc::Low).unwrap();
+        let matrix_2 = to_matrix_by_segments(&optimize_url_segments(url), QrCodeEcc::Low).unwrap();
 
-        assert_eq!("HTTPS://MAGICLEN.ORG", optimize_url_owned(url));
-    }
-
-    #[test]
-    fn text_optimize_url_owned_lv2() {
-        let url = "https://magiclen.org/path?a=10#hi".to_string();
-
-        assert_eq!("HTTPS://MAGICLEN.ORG/path?a=10#hi", optimize_url_owned(url));
+        assert!(matrix_2.len() < matrix_1.len());
     }
 
     #[cfg(feature = "validator")]
     #[test]
-    fn text_optimize_with_validated_http_url_lv1() {
+    fn text_optimize_with_validated_http_url_segments() {
         let validator = HttpUrlValidator {
             protocol: ValidatorOption::Allow,
             local: ValidatorOption::Allow,
         };
 
-        let url = validator.parse_str("https://magiclen.org").unwrap();
+        let url = "https://magiclen.org/path/to/12345";
 
-        assert_eq!("HTTPS://MAGICLEN.ORG", optimize_with_validated_http_url(&url));
-    }
+        let validated_http_url = validator.parse_str(url).unwrap();
 
-    #[cfg(feature = "validator")]
-    #[test]
-    fn text_optimize_with_validated_http_url_lv2() {
-        let validator = HttpUrlValidator {
-            protocol: ValidatorOption::Allow,
-            local: ValidatorOption::Allow,
-        };
+        let matrix_1 = to_matrix(url, QrCodeEcc::Low).unwrap();
+        let matrix_2 = to_matrix_by_segments(&optimize_validated_http_url_segments(&validated_http_url), QrCodeEcc::Low).unwrap();
 
-        let url = validator.parse_str("https://magiclen.org/path?a=10#hi").unwrap();
-
-        assert_eq!("HTTPS://MAGICLEN.ORG/path?a=10#hi", optimize_with_validated_http_url(&url));
+        assert!(matrix_2.len() < matrix_1.len());
     }
 
     #[test]
@@ -425,25 +660,27 @@ mod tests {
     fn text_to_svg_to_string() {
         let result = to_svg_to_string("Hello world!", QrCodeEcc::Low, 256, Some("")).unwrap();
 
-        assert_eq!(fs::read_to_string("tests/data/hello.svg").unwrap(), result);
+        assert_eq!(fs::read_to_string(Path::join(Path::new(FOLDER), "hello.svg")).unwrap(), result);
     }
 
     #[test]
     fn text_to_svg_to_file() {
-        to_svg_to_file("Hello world!", QrCodeEcc::Low, 256, Some(""), "tests/data/hello_output.svg").unwrap();
+        to_svg_to_file("Hello world!", QrCodeEcc::Low, 256, Some(""), Path::join(Path::new(FOLDER), "hello_output.svg")).unwrap();
 
-        assert_eq!(fs::read("tests/data/hello.svg").unwrap(), fs::read("tests/data/hello_output.svg").unwrap());
+        assert_eq!(fs::read(Path::join(Path::new(FOLDER), "hello.svg")).unwrap(), fs::read(Path::join(Path::new(FOLDER), "hello_output.svg")).unwrap());
     }
 
     #[test]
     fn text_to_png_to_vec() {
-        assert_eq!(fs::read("tests/data/hello.png").unwrap(), to_png_to_vec("Hello world!", QrCodeEcc::Low, 256).unwrap());
+        let result = to_png_to_vec("Hello world!", QrCodeEcc::Low, 256).unwrap();
+
+        assert_eq!(fs::read(Path::join(Path::new(FOLDER), "hello.png")).unwrap(), result);
     }
 
     #[test]
     fn text_to_png_to_file() {
-        to_png_to_file("Hello world!", QrCodeEcc::Low, 256, "tests/data/hello_output.png").unwrap();
+        to_png_to_file("Hello world!", QrCodeEcc::Low, 256, Path::join(Path::new(FOLDER), "hello_output.png")).unwrap();
 
-        assert_eq!(fs::read("tests/data/hello.png").unwrap(), fs::read("tests/data/hello_output.png").unwrap());
+        assert_eq!(fs::read(Path::join(Path::new(FOLDER), "hello.png")).unwrap(), fs::read(Path::join(Path::new(FOLDER), "hello_output.png")).unwrap());
     }
 }

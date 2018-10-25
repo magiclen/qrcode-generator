@@ -2,7 +2,16 @@
 name = "qrcode-generator"
 version = "0.1.0"
 authors = ["Magic Len <len@magiclen.org>"]
-edition = "2018"
+repository = "https://github.com/magiclen/qrcode-generator"
+homepage = "https://magiclen.org/qrcode-generator"
+keywords = ["rc", "refmut", "refcell", "write", "option"]
+description= "Generate QR Code matrices and images in RAW, PNG and SVG formats."
+readme = "README.md"
+license = "MIT"
+
+[badges]
+travis-ci = { repository = "magiclen/qrcode-generator", branch = "master" }
+appveyor = { repository = "magiclen/qrcode-generator", branch = "master", service = "github" }
 
 [dependencies]
 qrcodegen = "1.3.1"
