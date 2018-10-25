@@ -90,7 +90,7 @@
 //!
 //! ### Optimized URL segments
 //!
-//! URL is a common type of data used in QR code. The protocol and the scheme of a URL is case-insensitive, so they can be converted to a upper-case segment and encoded by **alphanumeric** instead of **binary** to reduce the size.
+//! URL is a common type of data used in QR code. The protocol and the host of a URL is case-insensitive, so they can be converted to a upper-case segment and encoded by **alphanumeric** instead of **binary** to reduce the size.
 //!
 //! You can use the `optimize_url_segments` function to create URL segments.
 //!
