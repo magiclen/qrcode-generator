@@ -170,6 +170,266 @@ use rc_writer::RcOptionWriter;
 #[cfg(feature = "validator")]
 use validators::http_url::HttpUrl;
 
+// TODO -----START-----
+// Temporary implement.
+// Refer to: https://github.com/nayuki/QR-Code-generator/blob/master/java/io/nayuki/qrcodegen/QrSegmentAdvanced.java
+
+static SORTED_ALPHANUMERIC_CHARSET: [char; 45] = [' ', '.', '$', '%', '*', '+', '-', '/',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+    ':',
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+];
+
+static ECC_CODEWORDS_PER_BLOCK: [[i8; 41]; 4] = [
+    [-1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],  // Low
+    [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28],  // Medium
+    [-1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],  // Quartile
+    [-1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],  // High
+];
+
+static NUM_ERROR_CORRECTION_BLOCKS: [[i8; 41]; 4] = [
+    [-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25],  // Low
+    [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49],  // Medium
+    [-1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8, 8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68],  // Quartile
+    [-1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81],  // High
+];
+
+#[inline]
+fn is_numeric(c: char) -> bool {
+    '0' <= c && c <= '9'
+}
+
+#[inline]
+fn is_alphanumeric(c: char) -> bool {
+    SORTED_ALPHANUMERIC_CHARSET.binary_search(&c).is_ok()
+}
+
+const NUMERIC: [usize; 4] = [0x1, 10, 12, 14];
+const ALPHANUMERIC: [usize; 4] = [0x2, 9, 11, 13];
+const BYTE: [usize; 4] = [0x4, 8, 16, 16];
+
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Numeric,
+    Alphanumeric,
+    Byte,
+}
+
+impl Mode {
+    fn get_mode_bits(&self) -> usize {
+        match self {
+            Numeric => {
+                NUMERIC[0]
+            }
+            Alphanumeric => {
+                ALPHANUMERIC[0]
+            }
+            Byte => {
+                BYTE[0]
+            }
+        }
+    }
+
+    fn get_num_char_count_bits(&self, version: usize) -> usize {
+        let index = (version + 7) / 17;
+        match self {
+            Numeric => {
+                NUMERIC[index]
+            }
+            Alphanumeric => {
+                ALPHANUMERIC[index]
+            }
+            Byte => {
+                BYTE[index]
+            }
+        }
+    }
+}
+
+const NUM_MODES: usize = 3;
+
+#[inline]
+fn table_get(table: &'static [[i8; 41]; 4], ver: usize, ecc: QrCodeEcc) -> usize {
+    let ordinal = match ecc {
+        QrCodeEcc::Low => 0,
+        QrCodeEcc::Medium => 1,
+        QrCodeEcc::Quartile => 2,
+        QrCodeEcc::High => 3,
+    };
+
+    table[ordinal][ver] as usize
+}
+
+#[inline]
+fn get_num_raw_data_modules(ver: usize) -> usize {
+    let mut result: usize = (16 * ver + 128) * ver + 64;
+    if ver >= 2 {
+        let numalign: usize = ver / 7 + 2;
+        result -= (25 * numalign - 10) * numalign - 55;
+        if ver >= 7 {
+            result -= 36;
+        }
+    }
+    result
+}
+
+
+#[inline]
+fn get_num_data_codewords(ver: usize, ecl: QrCodeEcc) -> usize {
+    get_num_raw_data_modules(ver) / 8 - table_get(&ECC_CODEWORDS_PER_BLOCK, ver, ecl) * table_get(&NUM_ERROR_CORRECTION_BLOCKS, ver, ecl)
+}
+
+#[inline]
+fn compute_character_modes(code_points: &[char], version: usize) -> Vec<Mode> {
+    let mode_types = [Mode::Byte, Mode::Alphanumeric, Mode::Numeric];
+
+    let mut head_costs = [0usize; NUM_MODES];
+
+    for i in 0..NUM_MODES {
+        head_costs[i] = (4 + mode_types[i].get_num_char_count_bits(version)) * 6;
+    }
+
+    let mut char_modes = {
+        let mut out = Vec::new();
+
+        for _ in 0..code_points.len() {
+            out.push([None::<Mode>; NUM_MODES]);
+        }
+
+        out
+    };
+
+    let mut prev_costs = head_costs.clone();
+
+    for i in 0..code_points.len() {
+        let c = code_points[i];
+        let mut cur_costs = [0usize; NUM_MODES];
+        {
+            cur_costs[0] = prev_costs[0] + c.len_utf8() * 8 * 6;
+            char_modes[i][0] = Some(mode_types[0]);
+        }
+        if is_alphanumeric(c) {
+            cur_costs[1] = prev_costs[1] + 33;
+            char_modes[i][1] = Some(mode_types[1]);
+        }
+        if is_numeric(c) {
+            cur_costs[2] = prev_costs[2] + 20;
+            char_modes[i][2] = Some(mode_types[2]);
+        }
+
+        for j in 0..NUM_MODES {
+            for k in 0..NUM_MODES {
+                let new_cost = (cur_costs[k] + 5) / 6 * 6 + head_costs[j];
+                if char_modes[i][k].is_some() && (char_modes[i][j].is_none() || new_cost < cur_costs[j]) {
+                    cur_costs[j] = new_cost;
+                    char_modes[i][j] = Some(mode_types[k]);
+                }
+            }
+        }
+
+        prev_costs = cur_costs;
+    }
+
+    let mut cur_mode = None::<Mode>;
+
+    let mut min_cost = 0;
+
+    for i in 0..NUM_MODES {
+        if cur_mode.is_none() || prev_costs[i] < min_cost {
+            min_cost = prev_costs[i];
+            cur_mode = Some(mode_types[i]);
+        }
+    }
+
+    let mut cur_mode = cur_mode.unwrap();
+
+    let mut result = Vec::with_capacity(char_modes.len());
+
+    for i in (0..char_modes.len()).rev() {
+        for j in 0..NUM_MODES {
+            if mode_types[j] == cur_mode {
+                cur_mode = char_modes[i][j].unwrap();
+                result.push(cur_mode);
+                break;
+            }
+        }
+    }
+
+    result
+}
+
+fn split_into_segments(code_points: &[char], char_modes: &[Mode]) -> Vec<QrSegment> {
+    let mut result = Vec::new();
+
+    let mut cur_mode = char_modes[0];
+
+    let mut start = 0;
+
+    let mut i = 0;
+    loop {
+        i += 1;
+        if i < code_points.len() && char_modes[i] == cur_mode {
+            continue;
+        }
+
+        let s = &code_points[start..(i - start)];
+
+        match cur_mode {
+            Mode::Byte => {
+                let s: String = s.iter().collect();
+                let v = s.into_bytes();
+                result.push(QrSegment::make_bytes(&v));
+            }
+            Mode::Numeric => {
+                result.push(QrSegment::make_numeric(s));
+            }
+            Mode::Alphanumeric => {
+                result.push(QrSegment::make_alphanumeric(s));
+            }
+        }
+
+        if i >= code_points.len() {
+            return result;
+        }
+
+        cur_mode = char_modes[i];
+        start = i;
+    }
+
+    result
+}
+
+#[inline]
+fn make_segments_optimally_version(code_points: &[char], version: usize) -> Vec<QrSegment> {
+    let char_modes = compute_character_modes(code_points, version);
+    split_into_segments(code_points, &char_modes)
+}
+
+
+#[inline]
+fn make_segments_optimally(code_points: &[char], ecc: QrCodeEcc) -> Vec<QrSegment> {
+    let mut segs = Vec::new();
+
+    for version in 1..=40 {
+        if version == 1 || version == 10 || version == 27 {
+            segs = make_segments_optimally_version(code_points, version);
+        }
+
+        let data_capacity_bits = get_num_data_codewords(version, ecc) * 8;
+        // TODO
+    }
+
+    vec![]
+}
+
+
+#[inline]
+fn make_segments(text: &[char]) -> Vec<QrSegment> {
+    QrSegment::make_segments(&text)
+}
+
+// TODO -----END-----
+
 #[cfg(feature = "validator")]
 /// Optimize URL text for generating QR code.
 pub fn optimize_validated_http_url_segments(http_url: &HttpUrl) -> Vec<QrSegment> {
@@ -184,13 +444,13 @@ pub fn optimize_validated_http_url_segments(http_url: &HttpUrl) -> Vec<QrSegment
 
     let first_chars: Vec<char> = first.chars().collect();
 
-    let mut out = QrSegment::make_segments(&first_chars);
+    let mut out = make_segments(&first_chars);
 
     let second = &url[first.len()..];
 
     let second_chars: Vec<char> = second.chars().collect();
 
-    out.extend_from_slice(&QrSegment::make_segments(&second_chars));
+    out.extend_from_slice(&make_segments(&second_chars));
 
     out
 }
@@ -213,27 +473,27 @@ pub fn optimize_url_segments<S: AsRef<str>>(url: S) -> Vec<QrSegment> {
 
                     let first_chars: Vec<char> = first.chars().collect();
 
-                    let mut out = QrSegment::make_segments(&first_chars);
+                    let mut out = make_segments(&first_chars);
 
                     let second = &url[next_slash_index..];
 
                     let second_chars: Vec<char> = second.chars().collect();
 
-                    out.extend_from_slice(&QrSegment::make_segments(&second_chars));
+                    out.extend_from_slice(&make_segments(&second_chars));
 
                     out
                 }
                 None => {
                     let chars: Vec<char> = url.to_uppercase().chars().collect();
 
-                    QrSegment::make_segments(&chars)
+                    make_segments(&chars)
                 }
             }
         }
         None => {
             let chars: Vec<char> = url.chars().collect();
 
-            QrSegment::make_segments(&chars)
+            make_segments(&chars)
         }
     }
 }
