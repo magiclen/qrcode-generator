@@ -159,7 +159,7 @@ use std::cell::RefCell;
 use std::fs::{self, File};
 use std::path::Path;
 
-use qrcodegen::{QrCode, QrSegment};
+use qrcodegen::{QrCode, QrSegment, qr_segment_advanced};
 
 pub use qrcodegen::QrCodeEcc;
 
@@ -172,7 +172,7 @@ use validators::http_url::HttpUrl;
 
 #[inline]
 fn make_segments(text: &[char], ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
-    match QrSegment::make_segments_optimally(&text, ecc, qrcodegen::QrCode_MIN_VERSION, qrcodegen::QrCode_MAX_VERSION) {
+    match qr_segment_advanced::make_segments_optimally(&text, ecc, qrcodegen::QrCode_MIN_VERSION, qrcodegen::QrCode_MAX_VERSION) {
         Some(segments) => Ok(segments),
         None => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
     }
@@ -254,17 +254,19 @@ fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, io
 
     match tried_utf8 {
         Ok(text) => {
-            let qr = match QrCode::encode_text(text.as_str(), ecc) {
-                Some(qr) => qr,
-                None => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+            let segments = make_segments(&text.chars().collect::<Vec<char>>(), ecc)?;
+
+            let qr = match QrCode::encode_segments(&segments, ecc) {
+                Ok(qr) => qr,
+                Err(_) => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
             };
 
             Ok(qr)
         }
         Err(_) => {
             let qr = match QrCode::encode_binary(data, ecc) {
-                Some(qr) => qr,
-                None => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+                Ok(qr) => qr,
+                Err(_) => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
             };
 
             Ok(qr)
@@ -275,8 +277,8 @@ fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, io
 #[inline]
 fn generate_qrcode_by_segments(segments: &[QrSegment], ecc: QrCodeEcc) -> Result<QrCode, io::Error> {
     match QrCode::encode_segments(segments, ecc) {
-        Some(qr) => Ok(qr),
-        None => Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+        Ok(qr) => Ok(qr),
+        Err(_) => Err(io::Error::new(ErrorKind::Other, "the data is too long"))
     }
 }
 
