@@ -247,16 +247,16 @@ fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, io
     match tried_utf8 {
         Ok(text) => {
             let qr = match QrCode::encode_text(text.as_str(), ecc) {
-                Some(qr) => qr,
-                None => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+                Ok(qr) => qr,
+                Err(_) => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
             };
 
             Ok(qr)
         }
         Err(_) => {
             let qr = match QrCode::encode_binary(data, ecc) {
-                Some(qr) => qr,
-                None => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+                Ok(qr) => qr,
+                Err(_) => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
             };
 
             Ok(qr)
@@ -267,8 +267,8 @@ fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, io
 #[inline]
 fn generate_qrcode_by_segments(segments: &[QrSegment], ecc: QrCodeEcc) -> Result<QrCode, io::Error> {
     match QrCode::encode_segments(segments, ecc) {
-        Some(qr) => Ok(qr),
-        None => Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+        Ok(qr) => Ok(qr),
+        Err(_) => Err(io::Error::new(ErrorKind::Other, "the data is too long"))
     }
 }
 
