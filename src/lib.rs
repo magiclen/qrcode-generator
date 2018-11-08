@@ -185,51 +185,43 @@ pub fn make_text_segments(text: &[char], ecc: QrCodeEcc) -> Result<Vec<QrSegment
 #[cfg(feature = "validator")]
 /// Optimize URL text for generating QR code.
 pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
-    let host = http_url.get_host().get_full_host();
-    let url = http_url.get_full_http_url();
+    let full_url = http_url.get_full_http_url();
+    let full_url_without_query_and_fragment = http_url.get_full_http_url_without_query_and_fragment();
 
-    let first = if http_url.get_path().is_some() {
-        url[..(host.len() + 1)].to_uppercase()
+    let s = if full_url.len() == full_url_without_query_and_fragment.len() {
+        full_url.to_uppercase()
     } else {
-        url[..host.len()].to_uppercase()
+        let mut s = full_url_without_query_and_fragment.to_uppercase();
+
+        s.push_str(&full_url[full_url_without_query_and_fragment.len()..]);
+
+        s
     };
 
-    let first_chars: Vec<char> = first.chars().collect();
+    let chars: Vec<char> = s.chars().collect();
 
-    let mut out = make_text_segments(&first_chars, ecc)?;
-
-    let second = &url[first.len()..];
-
-    let second_chars: Vec<char> = second.chars().collect();
-
-    out.extend_from_slice(&make_text_segments(&second_chars, ecc)?);
-
-    Ok(out)
+    make_text_segments(&chars, ecc)
 }
 
 #[cfg(feature = "validator")]
 /// Optimize URL text for generating QR code.
 pub fn optimize_validated_http_ftp_url_segments(http_ftp_url: &HttpFtpUrl, ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
-    let host = http_ftp_url.get_host().get_full_host();
-    let url = http_ftp_url.get_full_http_ftp_url();
+    let full_url = http_ftp_url.get_full_http_ftp_url();
+    let full_url_without_query_and_fragment = http_ftp_url.get_full_http_ftp_url_without_query_and_fragment();
 
-    let first = if http_ftp_url.get_path().is_some() {
-        url[..(host.len() + 1)].to_uppercase()
+    let s = if full_url.len() == full_url_without_query_and_fragment.len() {
+        full_url.to_uppercase()
     } else {
-        url[..host.len()].to_uppercase()
+        let mut s = full_url_without_query_and_fragment.to_uppercase();
+
+        s.push_str(&full_url[full_url_without_query_and_fragment.len()..]);
+
+        s
     };
 
-    let first_chars: Vec<char> = first.chars().collect();
+    let chars: Vec<char> = s.chars().collect();
 
-    let mut out = make_text_segments(&first_chars, ecc)?;
-
-    let second = &url[first.len()..];
-
-    let second_chars: Vec<char> = second.chars().collect();
-
-    out.extend_from_slice(&make_text_segments(&second_chars, ecc)?);
-
-    Ok(out)
+    make_text_segments(&chars, ecc)
 }
 
 /// Optimize URL text for generating QR code.
@@ -248,17 +240,15 @@ pub fn optimize_url_segments<S: AsRef<str>>(url: S, ecc: QrCodeEcc) -> Result<Ve
 
                     let first = url[..next_slash_index].to_uppercase();
 
-                    let first_chars: Vec<char> = first.chars().collect();
-
-                    let mut out = make_text_segments(&first_chars, ecc)?;
+                    let mut chars: Vec<char> = first.chars().collect();
 
                     let second = &url[next_slash_index..];
 
-                    let second_chars: Vec<char> = second.chars().collect();
+                    let mut second_chars: Vec<char> = second.chars().collect();
 
-                    out.extend_from_slice(&make_text_segments(&second_chars, ecc)?);
+                    chars.append(&mut second_chars);
 
-                    Ok(out)
+                    make_text_segments(&chars, ecc)
                 }
                 None => {
                     let chars: Vec<char> = url.to_uppercase().chars().collect();
