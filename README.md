@@ -94,26 +94,6 @@ let result: Vec<Vec<bool>> = qrcode_generator::to_matrix_by_segments(&segments, 
 println!("{:?}", result);
 ```
 
-## Optimized URL segments
-
-URL is a common type of data used in QR code. The protocol and the host of a URL is case-insensitive, so they can be converted to a upper-case segment and encoded by **alphanumeric** instead of **binary** to reduce the size.
-
-You can use the `optimize_url_segments` function to create URL segments.
-
-```rust
-extern crate qrcode_generator;
-
-use qrcode_generator::QrCodeEcc;
-
-
-let url = "https://magiclen.org/path/to/12345";
-
-let matrix_1 = qrcode_generator::to_matrix(url, QrCodeEcc::Low).unwrap();
-let matrix_2 = qrcode_generator::to_matrix_by_segments(&qrcode_generator::optimize_url_segments(url), QrCodeEcc::Low).unwrap();
-
-assert!(matrix_2.len() < matrix_1.len());
-```
-
 ## Validators Support
 
 `Validators` is a crate which can help you validate user input.
@@ -126,7 +106,7 @@ version = "*"
 features = ["validator"]
 ```
 
-And the `optimize_validated_http_url_segments` function is available.
+And the `optimize_validated_http_url_segments` and `optimize_validated_http_ftp_url_segments` functions are available. They can be used for generating a safe and optimized (as small as possible) URL QR Code.
 
 ```rust
 extern crate qrcode_generator;

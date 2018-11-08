@@ -88,26 +88,6 @@
 //! println!("{:?}", result);
 //! ```
 //!
-//! ### Optimized URL segments
-//!
-//! URL is a common type of data used in QR code. The protocol and the host of a URL is case-insensitive, so they can be converted to a upper-case segment and encoded by the **alphanumeric** mode instead of the **byte** mode to reduce the size.
-//!
-//! You can use the `optimize_url_segments` function to create URL segments.
-//!
-//! ```
-//! extern crate qrcode_generator;
-//!
-//! use qrcode_generator::QrCodeEcc;
-//!
-//!
-//! let url = "https://magiclen.org/path/to/12345";
-//!
-//! let matrix_1 = qrcode_generator::to_matrix(url, QrCodeEcc::Low).unwrap();
-//! let matrix_2 = qrcode_generator::to_matrix_by_segments(&qrcode_generator::optimize_url_segments(url, QrCodeEcc::Low).unwrap(), QrCodeEcc::Low).unwrap();
-//!
-//! assert!(matrix_2.len() < matrix_1.len());
-//! ```
-//!
 //! ### Validators Support
 //!
 //! `Validators` is a crate which can help you validate user input.
@@ -120,7 +100,7 @@
 //! features = ["validator"]
 //! ```
 //!
-//! And the `optimize_validated_http_url_segments` function is available.
+//! And the `optimize_validated_http_url_segments` and `optimize_validated_http_ftp_url_segments` functions are available. They can be used for generating a safe and optimized (as small as possible) URL QR Code.
 //!
 //! ```ignore
 //! extern crate qrcode_generator;
@@ -150,6 +130,11 @@ extern crate image;
 extern crate rc_writer;
 
 #[cfg(feature = "validator")]
+extern crate percent_encoding;
+#[cfg(feature = "validator")]
+extern crate idna;
+
+#[cfg(feature = "validator")]
 pub extern crate validators;
 
 use std::io::{self, Write, ErrorKind};
@@ -173,6 +158,9 @@ use validators::http_url::HttpUrl;
 #[cfg(feature = "validator")]
 use validators::http_ftp_url::HttpFtpUrl;
 
+#[cfg(feature = "validator")]
+use validators::host::Host;
+
 #[inline]
 /// Optimize any text for generating QR code.
 pub fn make_text_segments(text: &[char], ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
@@ -185,20 +173,53 @@ pub fn make_text_segments(text: &[char], ecc: QrCodeEcc) -> Result<Vec<QrSegment
 #[cfg(feature = "validator")]
 /// Optimize URL text for generating QR code.
 pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
-    let full_url = http_url.get_full_http_url();
-    let full_url_without_query_and_fragment = http_url.get_full_http_url_without_query_and_fragment();
+    let mut url = String::new();
 
-    let s = if full_url.len() == full_url_without_query_and_fragment.len() {
-        full_url.to_uppercase()
+    if let Some(protocol) = http_url.get_protocol() {
+        url.push_str(&protocol.to_uppercase());
+    }
+
+    if http_url.is_absolute() {
+        url.push_str("://");
     } else {
-        let mut s = full_url_without_query_and_fragment.to_uppercase();
+        url.push_str(":");
+    }
 
-        s.push_str(&full_url[full_url_without_query_and_fragment.len()..]);
+    let host = http_url.get_host();
 
-        s
-    };
+    if let Host::Domain(domain) = host {
+        match idna::domain_to_ascii(domain.get_full_domain_without_port()) {
+            Ok(domain_without_port) => {
+                url.push_str(&domain_without_port);
+            }
+            Err(_) => {
+                return Err(io::Error::new(ErrorKind::Other, "the url may not be correct"));
+            }
+        }
 
-    let chars: Vec<char> = s.chars().collect();
+        if let Some(port) = domain.get_port() {
+            url.push_str(":");
+            url.push_str(&format!("{}", port));
+        }
+    } else {
+        url.push_str(host.get_full_host());
+    }
+
+    if let Some(path) = http_url.get_path() {
+        url.push_str(&percent_encoding::utf8_percent_encode(path, percent_encoding::DEFAULT_ENCODE_SET).to_string());
+    }
+
+    if let Some(query) = http_url.get_query() {
+        url.push_str("?");
+        url.push_str(&percent_encoding::utf8_percent_encode(query, percent_encoding::QUERY_ENCODE_SET).to_string());
+    }
+
+    if let Some(fragment) = http_url.get_fragment() {
+        url.push_str("#");
+        url.push_str(&percent_encoding::utf8_percent_encode(fragment, percent_encoding::QUERY_ENCODE_SET).to_string());
+    }
+
+    let chars: Vec<char> = url.chars().collect();
 
     make_text_segments(&chars, ecc)
 }
@@ -206,63 +227,55 @@ pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) 
 #[cfg(feature = "validator")]
 /// Optimize URL text for generating QR code.
 pub fn optimize_validated_http_ftp_url_segments(http_ftp_url: &HttpFtpUrl, ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
-    let full_url = http_ftp_url.get_full_http_ftp_url();
-    let full_url_without_query_and_fragment = http_ftp_url.get_full_http_ftp_url_without_query_and_fragment();
+    let mut url = String::new();
 
-    let s = if full_url.len() == full_url_without_query_and_fragment.len() {
-        full_url.to_uppercase()
+    if let Some(protocol) = http_ftp_url.get_protocol() {
+        url.push_str(&protocol.to_uppercase());
+    }
+
+    if http_ftp_url.is_absolute() {
+        url.push_str("://");
     } else {
-        let mut s = full_url_without_query_and_fragment.to_uppercase();
+        url.push_str(":");
+    }
 
-        s.push_str(&full_url[full_url_without_query_and_fragment.len()..]);
+    let host = http_ftp_url.get_host();
 
-        s
-    };
-
-    let chars: Vec<char> = s.chars().collect();
-
-    make_text_segments(&chars, ecc)
-}
-
-/// Optimize URL text for generating QR code.
-pub fn optimize_url_segments<S: AsRef<str>>(url: S, ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
-    let url: &str = url.as_ref();
-
-    let protocol_sep_index = url.find("://");
-
-    match protocol_sep_index {
-        Some(protocol_sep_index) => {
-            let next_slash_index = &url[protocol_sep_index + 3..].find("/");
-
-            match next_slash_index {
-                Some(next_slash_index) => {
-                    let next_slash_index = next_slash_index + protocol_sep_index + 4;
-
-                    let first = url[..next_slash_index].to_uppercase();
-
-                    let mut chars: Vec<char> = first.chars().collect();
-
-                    let second = &url[next_slash_index..];
-
-                    let mut second_chars: Vec<char> = second.chars().collect();
-
-                    chars.append(&mut second_chars);
-
-                    make_text_segments(&chars, ecc)
-                }
-                None => {
-                    let chars: Vec<char> = url.to_uppercase().chars().collect();
-
-                    make_text_segments(&chars, ecc)
-                }
+    if let Host::Domain(domain) = host {
+        match idna::domain_to_ascii(domain.get_full_domain_without_port()) {
+            Ok(domain_without_port) => {
+                url.push_str(&domain_without_port);
+            }
+            Err(_) => {
+                return Err(io::Error::new(ErrorKind::Other, "the url may not be correct"));
             }
         }
-        None => {
-            let chars: Vec<char> = url.chars().collect();
 
-            make_text_segments(&chars, ecc)
+        if let Some(port) = domain.get_port() {
+            url.push_str(":");
+            url.push_str(&format!("{}", port));
         }
+    } else {
+        url.push_str(host.get_full_host());
     }
+
+    if let Some(path) = http_ftp_url.get_path() {
+        url.push_str(&percent_encoding::utf8_percent_encode(path, percent_encoding::DEFAULT_ENCODE_SET).to_string());
+    }
+
+    if let Some(query) = http_ftp_url.get_query() {
+        url.push_str("?");
+        url.push_str(&percent_encoding::utf8_percent_encode(query, percent_encoding::QUERY_ENCODE_SET).to_string());
+    }
+
+    if let Some(fragment) = http_ftp_url.get_fragment() {
+        url.push_str("#");
+        url.push_str(&percent_encoding::utf8_percent_encode(fragment, percent_encoding::QUERY_ENCODE_SET).to_string());
+    }
+
+    let chars: Vec<char> = url.chars().collect();
+
+    make_text_segments(&chars, ecc)
 }
 
 #[inline]
@@ -628,16 +641,6 @@ mod tests {
     #[cfg(windows)]
     const FOLDER: &str = r"tests\data";
 
-    #[test]
-    fn text_optimize_url() {
-        let url = "https://magiclen.org/path/to/12345";
-
-        let matrix_1 = to_matrix(url, QrCodeEcc::Low).unwrap();
-        let matrix_2 = to_matrix_by_segments(&optimize_url_segments(url, QrCodeEcc::Low).unwrap(), QrCodeEcc::Low).unwrap();
-
-        assert!(matrix_2.len() < matrix_1.len());
-    }
-
     #[cfg(feature = "validator")]
     #[test]
     fn text_optimize_with_validated_http_url_segments() {
@@ -664,7 +667,7 @@ mod tests {
             local: ValidatorOption::Allow,
         };
 
-        let url = "ftp://f.magiclen.org/path/to/12345";
+        let url = "https://magiclen.org/path/to/12345";
 
         let validated_http_ftp_url = validator.parse_str(url).unwrap();
 
