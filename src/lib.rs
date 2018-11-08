@@ -170,6 +170,9 @@ use rc_writer::RcOptionWriter;
 #[cfg(feature = "validator")]
 use validators::http_url::HttpUrl;
 
+#[cfg(feature = "validator")]
+use validators::http_ftp_url::HttpFtpUrl;
+
 #[inline]
 fn make_segments(text: &[char], ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
     match qr_segment_advanced::make_segments_optimally(&text, ecc, qrcodegen::QrCode_MIN_VERSION, qrcodegen::QrCode_MAX_VERSION) {
@@ -185,6 +188,31 @@ pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) 
     let url = http_url.get_full_http_url();
 
     let first = if http_url.get_path().is_some() {
+        url[..(host.len() + 1)].to_uppercase()
+    } else {
+        url[..host.len()].to_uppercase()
+    };
+
+    let first_chars: Vec<char> = first.chars().collect();
+
+    let mut out = make_segments(&first_chars, ecc)?;
+
+    let second = &url[first.len()..];
+
+    let second_chars: Vec<char> = second.chars().collect();
+
+    out.extend_from_slice(&make_segments(&second_chars, ecc)?);
+
+    Ok(out)
+}
+
+#[cfg(feature = "validator")]
+/// Optimize URL text for generating QR code.
+pub fn optimize_validated_http_ftp_url_segments(http_ftp_url: &HttpFtpUrl, ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
+    let host = http_ftp_url.get_host().get_full_host();
+    let url = http_ftp_url.get_full_http_ftp_url();
+
+    let first = if http_ftp_url.get_path().is_some() {
         url[..(host.len() + 1)].to_uppercase()
     } else {
         url[..host.len()].to_uppercase()
@@ -601,7 +629,7 @@ mod tests {
     use std::fs;
 
     #[cfg(feature = "validator")]
-    use validators::{ValidatorOption, http_url::HttpUrlValidator};
+    use validators::{ValidatorOption, http_url::HttpUrlValidator, http_ftp_url::HttpFtpUrlValidator};
 
     #[cfg(not(windows))]
     const FOLDER: &str = "tests/data";
@@ -633,6 +661,24 @@ mod tests {
 
         let matrix_1 = to_matrix(url, QrCodeEcc::Low).unwrap();
         let matrix_2 = to_matrix_by_segments(&optimize_validated_http_url_segments(&validated_http_url, QrCodeEcc::Low).unwrap(), QrCodeEcc::Low).unwrap();
+
+        assert!(matrix_2.len() < matrix_1.len());
+    }
+
+    #[cfg(feature = "validator")]
+    #[test]
+    fn text_optimize_with_validated_http_ftp_url_segments() {
+        let validator = HttpFtpUrlValidator {
+            protocol: ValidatorOption::Allow,
+            local: ValidatorOption::Allow,
+        };
+
+        let url = "ftp://f.magiclen.org/path/to/12345";
+
+        let validated_http_ftp_url = validator.parse_str(url).unwrap();
+
+        let matrix_1 = to_matrix(url, QrCodeEcc::Low).unwrap();
+        let matrix_2 = to_matrix_by_segments(&optimize_validated_http_ftp_url_segments(&validated_http_ftp_url, QrCodeEcc::Low).unwrap(), QrCodeEcc::Low).unwrap();
 
         assert!(matrix_2.len() < matrix_1.len());
     }
