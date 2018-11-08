@@ -174,7 +174,8 @@ use validators::http_url::HttpUrl;
 use validators::http_ftp_url::HttpFtpUrl;
 
 #[inline]
-fn make_segments(text: &[char], ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
+/// Optimize any text for generating QR code.
+pub fn make_text_segments(text: &[char], ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
     match qr_segment_advanced::make_segments_optimally(&text, ecc, qrcodegen::QrCode_MIN_VERSION, qrcodegen::QrCode_MAX_VERSION) {
         Some(segments) => Ok(segments),
         None => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
@@ -195,13 +196,13 @@ pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) 
 
     let first_chars: Vec<char> = first.chars().collect();
 
-    let mut out = make_segments(&first_chars, ecc)?;
+    let mut out = make_text_segments(&first_chars, ecc)?;
 
     let second = &url[first.len()..];
 
     let second_chars: Vec<char> = second.chars().collect();
 
-    out.extend_from_slice(&make_segments(&second_chars, ecc)?);
+    out.extend_from_slice(&make_text_segments(&second_chars, ecc)?);
 
     Ok(out)
 }
@@ -220,13 +221,13 @@ pub fn optimize_validated_http_ftp_url_segments(http_ftp_url: &HttpFtpUrl, ecc: 
 
     let first_chars: Vec<char> = first.chars().collect();
 
-    let mut out = make_segments(&first_chars, ecc)?;
+    let mut out = make_text_segments(&first_chars, ecc)?;
 
     let second = &url[first.len()..];
 
     let second_chars: Vec<char> = second.chars().collect();
 
-    out.extend_from_slice(&make_segments(&second_chars, ecc)?);
+    out.extend_from_slice(&make_text_segments(&second_chars, ecc)?);
 
     Ok(out)
 }
@@ -249,27 +250,27 @@ pub fn optimize_url_segments<S: AsRef<str>>(url: S, ecc: QrCodeEcc) -> Result<Ve
 
                     let first_chars: Vec<char> = first.chars().collect();
 
-                    let mut out = make_segments(&first_chars, ecc)?;
+                    let mut out = make_text_segments(&first_chars, ecc)?;
 
                     let second = &url[next_slash_index..];
 
                     let second_chars: Vec<char> = second.chars().collect();
 
-                    out.extend_from_slice(&make_segments(&second_chars, ecc)?);
+                    out.extend_from_slice(&make_text_segments(&second_chars, ecc)?);
 
                     Ok(out)
                 }
                 None => {
                     let chars: Vec<char> = url.to_uppercase().chars().collect();
 
-                    make_segments(&chars, ecc)
+                    make_text_segments(&chars, ecc)
                 }
             }
         }
         None => {
             let chars: Vec<char> = url.chars().collect();
 
-            make_segments(&chars, ecc)
+            make_text_segments(&chars, ecc)
         }
     }
 }
@@ -282,7 +283,7 @@ fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, io
 
     match tried_utf8 {
         Ok(text) => {
-            let segments = make_segments(&text.chars().collect::<Vec<char>>(), ecc)?;
+            let segments = make_text_segments(&text.chars().collect::<Vec<char>>(), ecc)?;
 
             let qr = match QrCode::encode_segments(&segments, ecc) {
                 Ok(qr) => qr,
