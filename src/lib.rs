@@ -190,7 +190,7 @@ pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) 
     if let Host::Domain(domain) = host {
         match idna::domain_to_ascii(domain.get_full_domain_without_port()) {
             Ok(domain_without_port) => {
-                url.push_str(&domain_without_port);
+                url.push_str(&domain_without_port.to_uppercase());
             }
             Err(_) => {
                 return Err(io::Error::new(ErrorKind::Other, "the url may not be correct"));
@@ -244,7 +244,7 @@ pub fn optimize_validated_http_ftp_url_segments(http_ftp_url: &HttpFtpUrl, ecc: 
     if let Host::Domain(domain) = host {
         match idna::domain_to_ascii(domain.get_full_domain_without_port()) {
             Ok(domain_without_port) => {
-                url.push_str(&domain_without_port);
+                url.push_str(&domain_without_port.to_uppercase());
             }
             Err(_) => {
                 return Err(io::Error::new(ErrorKind::Other, "the url may not be correct"));
