@@ -1,128 +1,132 @@
-//! This crate provides functions to generate QR Code matrices and images in RAW, PNG and SVG formats.
-//!
-//! ## Examples
-//!
-//! ### Encode any data to a QR Code matrix which is `Vec<Vec<bool>>`.
-//!
-//! ```
-//! extern crate qrcode_generator;
-//!
-//! use qrcode_generator::QrCodeEcc;
-//!
-//! let result: Vec<Vec<bool>> = qrcode_generator::to_matrix("Hello world!", QrCodeEcc::Low).unwrap();
-//!
-//! println!("{:?}", result);
-//! ```
-//!
-//! ### Encode any data to a PNG image stored in a Vec instance.
-//!
-//! ```
-//! extern crate qrcode_generator;
-//!
-//! use qrcode_generator::QrCodeEcc;
-//!
-//! let result: Vec<u8> = qrcode_generator::to_png_to_vec("Hello world!", QrCodeEcc::Low, 1024).unwrap();
-//!
-//! println!("{:?}", result);
-//! ```
-//!
-//! ### Encode any data to a PNG image stored in a file.
-//!
-//! ```ignore
-//! extern crate qrcode_generator;
-//!
-//! use qrcode_generator::QrCodeEcc;
-//!
-//! qrcode_generator::to_png_to_file("Hello world!", QrCodeEcc::Low, 1024, "path/to/file.png").unwrap();
-//! ```
-//!
-//! ### Encode any data to a SVG image stored in a String instance.
-//!
-//! ```
-//! extern crate qrcode_generator;
-//!
-//! use qrcode_generator::QrCodeEcc;
-//!
-//! let result: String = qrcode_generator::to_svg_to_string("Hello world!", QrCodeEcc::Low, 1024, None).unwrap();
-//!
-//! println!("{:?}", result);
-//! ```
-//!
-//! ### Encode any data to a SVG image stored in a file.
-//!
-//! ```ignore
-//! extern crate qrcode_generator;
-//!
-//! use qrcode_generator::QrCodeEcc;
-//!
-//! qrcode_generator::to_svg_to_file("Hello world!", QrCodeEcc::Low, 1024, None, "path/to/file.svg").unwrap();
-//! ```
-//!
-//! ## Low-level Usage
-//!
-//! ### Raw Image Data
-//!
-//! The `to_image` and `to_image_buffer` functions can be used, if you want to modify your image.
-//!
-//! ### Segments
-//!
-//! Every **generate** and **to** function has its own **by_segments** function. You can concatenate segments by using different encoding methods, such as **numeric**, **alphanumeric** or **binary** to reduce the size (level) of your QR code matrix/image.
-//!
-//! ```
-//! extern crate qrcode_generator;
-//!
-//! use qrcode_generator::QrCodeEcc;
-//! use qrcode_generator::qrcodegen::QrSegment;
-//!
-//! let first = "1234567";
-//!
-//! let second = "ABCDEFG";
-//!
-//! let first_chars: Vec<char> = first.chars().collect();
-//! let second_chars: Vec<char> = second.chars().collect();
-//!
-//! let segments = vec![QrSegment::make_numeric(&first_chars), QrSegment::make_alphanumeric(&second_chars)];
-//!
-//! let result: Vec<Vec<bool>> = qrcode_generator::to_matrix_by_segments(&segments, QrCodeEcc::Low).unwrap();
-//!
-//! println!("{:?}", result);
-//! ```
-//!
-//! ### Validators Support
-//!
-//! `Validators` is a crate which can help you validate user input.
-//!
-//! To use with Validators support, you have to enable the **validator** feature for this crate.
-//!
-//! ```ignore
-//! [dependencies.qrcode-generator]
-//! version = "*"
-//! features = ["validator"]
-//! ```
-//!
-//! And the `optimize_validated_http_url_segments` and `optimize_validated_http_ftp_url_segments` functions are available. They can be used for generating a safe and optimized (as small as possible) URL QR Code.
-//!
-//! ```ignore
-//! extern crate qrcode_generator;
-//! extern crate validators;
-//!
-//! use qrcode_generator::QrCodeEcc;
-//! use validators::{ValidatorOption, http_url::HttpUrlValidator};
-//!
-//! let validator = HttpUrlValidator {
-//!     protocol: ValidatorOption::Allow,
-//!     local: ValidatorOption::Allow,
-//! };
-//!
-//! let url = "https://magiclen.org/path/to/12345";
-//!
-//! let validated_http_url = validator.parse_str(url).unwrap();
-//!
-//! let matrix_1 = qrcode_generator::to_matrix(url, QrCodeEcc::Low).unwrap();
-//! let matrix_2 = qrcode_generator::to_matrix_by_segments(&qrcode_generator::optimize_validated_http_url_segments(&validated_http_url, QrCodeEcc::Low).unwrap(), QrCodeEcc::Low).unwrap();
-//!
-//! assert!(matrix_2.len() < matrix_1.len());
-//! ```
+/*!
+# QR Code Generator
+
+This crate provides functions to generate QR Code matrices and images in RAW, PNG and SVG formats.
+
+## Examples
+
+### Encode any data to a QR Code matrix which is `Vec<Vec<bool>>`.
+
+```rust
+extern crate qrcode_generator;
+
+use qrcode_generator::QrCodeEcc;
+
+let result: Vec<Vec<bool>> = qrcode_generator::to_matrix("Hello world!", QrCodeEcc::Low).unwrap();
+
+println!("{:?}", result);
+```
+
+### Encode any data to a PNG image stored in a Vec instance.
+
+```rust
+extern crate qrcode_generator;
+
+use qrcode_generator::QrCodeEcc;
+
+let result: Vec<u8> = qrcode_generator::to_png_to_vec("Hello world!", QrCodeEcc::Low, 1024).unwrap();
+
+println!("{:?}", result);
+```
+
+### Encode any data to a PNG image stored in a file.
+
+```rust,ignore
+extern crate qrcode_generator;
+
+use qrcode_generator::QrCodeEcc;
+
+qrcode_generator::to_png_to_file("Hello world!", QrCodeEcc::Low, 1024, "path/to/file.png").unwrap();
+```
+
+### Encode any data to a SVG image stored in a String instance.
+
+```rust
+extern crate qrcode_generator;
+
+use qrcode_generator::QrCodeEcc;
+
+let result: String = qrcode_generator::to_svg_to_string("Hello world!", QrCodeEcc::Low, 1024, None).unwrap();
+
+println!("{:?}", result);
+```
+
+### Encode any data to a SVG image stored in a file.
+
+```rust,ignore
+extern crate qrcode_generator;
+
+use qrcode_generator::QrCodeEcc;
+
+qrcode_generator::to_svg_to_file("Hello world!", QrCodeEcc::Low, 1024, None, "path/to/file.svg").unwrap();
+```
+
+## Low-level Usage
+
+### Raw Image Data
+
+The `to_image` and `to_image_buffer` functions can be used, if you want to modify your image.
+
+### Segments
+
+Every **generate** and **to** function has its own **by_segments** function. You can concatenate segments by using different encoding methods, such as **numeric**, **alphanumeric** or **binary** to reduce the size (level) of your QR code matrix/image.
+
+```rust
+extern crate qrcode_generator;
+
+use qrcode_generator::QrCodeEcc;
+use qrcode_generator::qrcodegen::QrSegment;
+
+let first = "1234567";
+
+let second = "ABCDEFG";
+
+let first_chars: Vec<char> = first.chars().collect();
+let second_chars: Vec<char> = second.chars().collect();
+
+let segments = vec![QrSegment::make_numeric(&first_chars), QrSegment::make_alphanumeric(&second_chars)];
+
+let result: Vec<Vec<bool>> = qrcode_generator::to_matrix_by_segments(&segments, QrCodeEcc::Low).unwrap();
+
+println!("{:?}", result);
+```
+
+### Validators Support
+
+`Validators` is a crate which can help you validate user input.
+
+To use with Validators support, you have to enable the **validator** feature for this crate.
+
+```toml
+[dependencies.qrcode-generator]
+version = "*"
+features = ["validator"]
+```
+
+And the `optimize_validated_http_url_segments` and `optimize_validated_http_ftp_url_segments` functions are available. They can be used for generating a safe and optimized (as small as possible) URL QR Code.
+
+```rust,ignore
+extern crate qrcode_generator;
+extern crate validators;
+
+use qrcode_generator::QrCodeEcc;
+use validators::{ValidatorOption, http_url::HttpUrlValidator};
+
+let validator = HttpUrlValidator {
+    protocol: ValidatorOption::Allow,
+    local: ValidatorOption::Allow,
+};
+
+let url = "https://magiclen.org/path/to/12345";
+
+let validated_http_url = validator.parse_str(url).unwrap();
+
+let matrix_1 = qrcode_generator::to_matrix(url, QrCodeEcc::Low).unwrap();
+let matrix_2 = qrcode_generator::to_matrix_by_segments(&qrcode_generator::optimize_validated_http_url_segments(&validated_http_url, QrCodeEcc::Low).unwrap(), QrCodeEcc::Low).unwrap();
+
+assert!(matrix_2.len() < matrix_1.len());
+```
+*/
 
 pub extern crate qrcodegen;
 extern crate htmlescape;
@@ -143,6 +147,8 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::fs::{self, File};
 use std::path::Path;
+#[allow(unused_imports)]
+use std::fmt::Write as FmtWrite;
 
 use qrcodegen::{QrCode, QrSegment, qr_segment_advanced};
 
@@ -182,7 +188,7 @@ pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) 
     if http_url.is_absolute() {
         url.push_str("://");
     } else {
-        url.push_str(":");
+        url.push(':');
     }
 
     let host = http_url.get_host();
@@ -198,8 +204,7 @@ pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) 
         }
 
         if let Some(port) = domain.get_port() {
-            url.push_str(":");
-            url.push_str(&format!("{}", port));
+            url.write_fmt(format_args!(":{}", port)).unwrap();
         }
     } else {
         url.push_str(host.get_full_host());
@@ -210,12 +215,12 @@ pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) 
     }
 
     if let Some(query) = http_url.get_query() {
-        url.push_str("?");
+        url.push('?');
         url.push_str(&percent_encoding::utf8_percent_encode(query, percent_encoding::QUERY_ENCODE_SET).to_string());
     }
 
     if let Some(fragment) = http_url.get_fragment() {
-        url.push_str("#");
+        url.push('#');
         url.push_str(&percent_encoding::utf8_percent_encode(fragment, percent_encoding::QUERY_ENCODE_SET).to_string());
     }
 
@@ -236,7 +241,7 @@ pub fn optimize_validated_http_ftp_url_segments(http_ftp_url: &HttpFtpUrl, ecc: 
     if http_ftp_url.is_absolute() {
         url.push_str("://");
     } else {
-        url.push_str(":");
+        url.push(':');
     }
 
     let host = http_ftp_url.get_host();
@@ -252,8 +257,7 @@ pub fn optimize_validated_http_ftp_url_segments(http_ftp_url: &HttpFtpUrl, ecc: 
         }
 
         if let Some(port) = domain.get_port() {
-            url.push_str(":");
-            url.push_str(&format!("{}", port));
+            url.write_fmt(format_args!(":{}", port)).unwrap();
         }
     } else {
         url.push_str(host.get_full_host());
@@ -264,12 +268,12 @@ pub fn optimize_validated_http_ftp_url_segments(http_ftp_url: &HttpFtpUrl, ecc: 
     }
 
     if let Some(query) = http_ftp_url.get_query() {
-        url.push_str("?");
+        url.push('?');
         url.push_str(&percent_encoding::utf8_percent_encode(query, percent_encoding::QUERY_ENCODE_SET).to_string());
     }
 
     if let Some(fragment) = http_ftp_url.get_fragment() {
-        url.push_str("#");
+        url.push('#');
         url.push_str(&percent_encoding::utf8_percent_encode(fragment, percent_encoding::QUERY_ENCODE_SET).to_string());
     }
 
@@ -624,113 +628,4 @@ pub fn to_png_to_file<D: AsRef<[u8]>, P: AsRef<Path>>(data: D, ecc: QrCodeEcc, s
 /// Encode data to a PNG image via a file path.
 pub fn to_png_to_file_by_segments<P: AsRef<Path>>(segments: &[QrSegment], ecc: QrCodeEcc, size: usize, path: P) -> Result<(), io::Error> {
     to_png_to_file_inner(generate_qrcode_by_segments(segments, ecc)?, size, path)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use std::fs;
-
-    #[cfg(feature = "validator")]
-    use validators::{ValidatorOption, http_url::HttpUrlValidator, http_ftp_url::HttpFtpUrlValidator};
-
-    #[cfg(not(windows))]
-    const FOLDER: &str = "tests/data";
-
-    #[cfg(windows)]
-    const FOLDER: &str = r"tests\data";
-
-    #[cfg(feature = "validator")]
-    #[test]
-    fn text_optimize_with_validated_http_url_segments() {
-        let validator = HttpUrlValidator {
-            protocol: ValidatorOption::Allow,
-            local: ValidatorOption::Allow,
-        };
-
-        let url = "https://magiclen.org/path/to/12345";
-
-        let validated_http_url = validator.parse_str(url).unwrap();
-
-        let matrix_1 = to_matrix(url, QrCodeEcc::Low).unwrap();
-        let matrix_2 = to_matrix_by_segments(&optimize_validated_http_url_segments(&validated_http_url, QrCodeEcc::Low).unwrap(), QrCodeEcc::Low).unwrap();
-
-        assert!(matrix_2.len() < matrix_1.len());
-    }
-
-    #[cfg(feature = "validator")]
-    #[test]
-    fn text_optimize_with_validated_http_ftp_url_segments() {
-        let validator = HttpFtpUrlValidator {
-            protocol: ValidatorOption::Allow,
-            local: ValidatorOption::Allow,
-        };
-
-        let url = "https://magiclen.org/path/to/12345";
-
-        let validated_http_ftp_url = validator.parse_str(url).unwrap();
-
-        let matrix_1 = to_matrix(url, QrCodeEcc::Low).unwrap();
-        let matrix_2 = to_matrix_by_segments(&optimize_validated_http_ftp_url_segments(&validated_http_ftp_url, QrCodeEcc::Low).unwrap(), QrCodeEcc::Low).unwrap();
-
-        assert!(matrix_2.len() < matrix_1.len());
-    }
-
-    #[test]
-    fn text_to_matrix() {
-        let result = to_matrix("Hello world!", QrCodeEcc::Low).unwrap();
-
-        assert_eq!(vec![
-            vec![true, true, true, true, true, true, true, false, true, true, true, true, true, false, true, true, true, true, true, true, true],
-            vec![true, false, false, false, false, false, true, false, true, false, true, false, true, false, true, false, false, false, false, false, true],
-            vec![true, false, true, true, true, false, true, false, false, false, true, true, false, false, true, false, true, true, true, false, true],
-            vec![true, false, true, true, true, false, true, false, true, false, true, true, true, false, true, false, true, true, true, false, true],
-            vec![true, false, true, true, true, false, true, false, false, false, true, false, false, false, true, false, true, true, true, false, true],
-            vec![true, false, false, false, false, false, true, false, false, true, true, false, false, false, true, false, false, false, false, false, true],
-            vec![true, true, true, true, true, true, true, false, true, false, true, false, true, false, true, true, true, true, true, true, true],
-            vec![false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false, false, false, false, false],
-            vec![true, false, true, true, false, true, true, true, false, false, true, false, false, false, true, false, false, true, false, true, true],
-            vec![false, false, true, true, false, false, false, true, false, true, true, false, true, true, true, true, true, true, true, false, true],
-            vec![true, true, true, false, true, true, true, false, true, false, false, false, true, true, false, true, false, false, false, true, true],
-            vec![false, true, true, true, true, true, false, true, false, false, true, false, true, false, false, true, false, true, false, true, false],
-            vec![false, false, true, true, false, false, true, true, false, false, false, true, false, true, true, false, false, false, false, false, true],
-            vec![false, false, false, false, false, false, false, false, true, true, true, true, false, false, true, true, true, false, true, false, true],
-            vec![true, true, true, true, true, true, true, false, true, false, true, false, false, true, true, true, true, false, false, false, false],
-            vec![true, false, false, false, false, false, true, false, true, true, true, true, true, true, false, true, false, true, true, false, false],
-            vec![true, false, true, true, true, false, true, false, false, true, false, true, false, false, false, false, false, true, true, true, false],
-            vec![true, false, true, true, true, false, true, false, true, false, true, false, true, false, true, false, false, true, true, true, false],
-            vec![true, false, true, true, true, false, true, false, true, false, false, false, true, false, false, true, false, false, true, false, false],
-            vec![true, false, false, false, false, false, true, false, false, true, false, true, false, true, true, true, true, false, false, false, true],
-            vec![true, true, true, true, true, true, true, false, true, false, true, true, false, true, true, true, false, false, true, false, false]]
-                   , result);
-    }
-
-    #[test]
-    fn text_to_svg_to_string() {
-        let result = to_svg_to_string("Hello world!", QrCodeEcc::Low, 256, Some("")).unwrap();
-
-        assert_eq!(fs::read_to_string(Path::join(Path::new(FOLDER), "hello.svg")).unwrap(), result);
-    }
-
-    #[test]
-    fn text_to_svg_to_file() {
-        to_svg_to_file("Hello world!", QrCodeEcc::Low, 256, Some(""), Path::join(Path::new(FOLDER), "hello_output.svg")).unwrap();
-
-        assert_eq!(fs::read(Path::join(Path::new(FOLDER), "hello.svg")).unwrap(), fs::read(Path::join(Path::new(FOLDER), "hello_output.svg")).unwrap());
-    }
-
-    #[test]
-    fn text_to_png_to_vec() {
-        let result = to_png_to_vec("Hello world!", QrCodeEcc::Low, 256).unwrap();
-
-        assert_eq!(fs::read(Path::join(Path::new(FOLDER), "hello.png")).unwrap(), result);
-    }
-
-    #[test]
-    fn text_to_png_to_file() {
-        to_png_to_file("Hello world!", QrCodeEcc::Low, 256, Path::join(Path::new(FOLDER), "hello_output.png")).unwrap();
-
-        assert_eq!(fs::read(Path::join(Path::new(FOLDER), "hello.png")).unwrap(), fs::read(Path::join(Path::new(FOLDER), "hello_output.png")).unwrap());
-    }
 }
