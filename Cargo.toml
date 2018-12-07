@@ -1,6 +1,6 @@
 [package]
 name = "qrcode-generator"
-version = "2.3.2"
+version = "2.3.3"
 authors = ["Magic Len <len@magiclen.org>"]
 repository = "https://github.com/magiclen/qrcode-generator"
 homepage = "https://magiclen.org/qrcode-generator"
@@ -21,7 +21,7 @@ htmlescape = "0.3.1"
 rc-writer = "1.1.0"
 percent-encoding = { version = "1.0.1", optional = true }
 idna = { version = "0.1.5", optional = true }
-validators = { version = "0.18", optional = true }
+validators = { version = "0.19", optional = true }
 
 [features]
 validator = ["validators", "idna", "percent-encoding"]
