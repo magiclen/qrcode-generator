@@ -1,6 +1,6 @@
 [package]
 name = "qrcode-generator"
-version = "1.0.3"
+version = "1.0.4"
 authors = ["Magic Len <len@magiclen.org>"]
 repository = "https://github.com/magiclen/qrcode-generator"
 homepage = "https://magiclen.org/qrcode-generator"
@@ -19,7 +19,7 @@ qrcodegen = "=1.4.0"
 image = "0.20.0"
 htmlescape = "0.3.1"
 rc-writer = "1.1.0"
-validators = { version = "0.15", optional = true }
+validators = { version = ">=0.15,<0.21", optional = true }
 
 [features]
 validator = ["validators"]
