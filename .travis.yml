@@ -10,6 +10,14 @@ os:
   - osx
   - windows
 
+env:
+  -
+  - FEATURES="validator"
+
+script:
+  - if [ "$NO_DEFAULT_FEATURES" = "1" ]; then NO_DEFAULT_FEATURES="--no-default-features"; else NO_DEFAULT_FEATURES=""; fi
+  - cargo test --verbose $NO_DEFAULT_FEATURES --features "$FEATURES"
+
 matrix:
   include:
     - rust: stable
