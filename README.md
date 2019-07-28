@@ -2,7 +2,6 @@ QR Code Generator
 ====================
 
 [![Build Status](https://travis-ci.org/magiclen/qrcode-generator.svg?branch=master)](https://travis-ci.org/magiclen/qrcode-generator)
-[![Build status](https://ci.appveyor.com/api/projects/status/9blkelin9y7wnw0n/branch/master?svg=true)](https://ci.appveyor.com/project/magiclen/qrcode-generator/branch/master)
 
 This crate provides functions to generate QR Code matrices and images in RAW, PNG and SVG formats.
 

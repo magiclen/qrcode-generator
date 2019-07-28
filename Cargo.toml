@@ -10,9 +10,9 @@ description= "Generate QR Code matrices and images in RAW, PNG and SVG formats."
 readme = "README.md"
 license = "MIT"
 
-[badges]
-travis-ci = { repository = "magiclen/qrcode-generator", branch = "master" }
-appveyor = { repository = "magiclen/qrcode-generator", branch = "master", service = "github" }
+[badges.travis-ci]
+repository = "magiclen/qrcode-generator"
+branch = "master"
 
 [dependencies]
 qrcodegen = { git = "https://github.com/magiclen/QR-Code-generator", branch = "master" }
