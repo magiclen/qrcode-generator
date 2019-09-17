@@ -128,33 +128,33 @@ assert!(matrix_2.len() < matrix_1.len());
 ```
 */
 
-pub extern crate qrcodegen;
 extern crate htmlescape;
 extern crate image;
+pub extern crate qrcodegen;
 extern crate rc_writer;
 
 #[cfg(feature = "validator")]
-extern crate percent_encoding;
-#[cfg(feature = "validator")]
 extern crate idna;
+#[cfg(feature = "validator")]
+extern crate percent_encoding;
 
 #[cfg(feature = "validator")]
 pub extern crate validators;
 
-use std::io::{self, Write, ErrorKind};
+use std::io::{self, ErrorKind, Write};
 
-use std::rc::Rc;
 use std::cell::RefCell;
-use std::fs::{self, File};
-use std::path::Path;
 #[allow(unused_imports)]
 use std::fmt::Write as FmtWrite;
+use std::fs::{self, File};
+use std::path::Path;
+use std::rc::Rc;
 
-use qrcodegen::{QrCode, QrSegment, qr_segment_advanced};
+use qrcodegen::{qr_segment_advanced, QrCode, QrSegment};
 
 pub use qrcodegen::QrCodeEcc;
 
-use image::{ImageBuffer, Luma, png::PNGEncoder, ColorType};
+use image::{png::PNGEncoder, ColorType, ImageBuffer, Luma};
 
 use rc_writer::RcOptionWriter;
 
@@ -170,15 +170,23 @@ use validators::host::Host;
 #[inline]
 /// Optimize any text for generating QR code.
 pub fn make_text_segments(text: &[char], ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
-    match qr_segment_advanced::make_segments_optimally(&text, ecc, qrcodegen::QrCode_MIN_VERSION, qrcodegen::QrCode_MAX_VERSION) {
+    match qr_segment_advanced::make_segments_optimally(
+        &text,
+        ecc,
+        qrcodegen::QrCode_MIN_VERSION,
+        qrcodegen::QrCode_MAX_VERSION,
+    ) {
         Some(segments) => Ok(segments),
-        None => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+        None => Err(io::Error::new(ErrorKind::Other, "the data is too long")),
     }
 }
 
 #[cfg(feature = "validator")]
 /// Optimize URL text for generating QR code.
-pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
+pub fn optimize_validated_http_url_segments(
+    http_url: &HttpUrl,
+    ecc: QrCodeEcc,
+) -> Result<Vec<QrSegment>, io::Error> {
     let mut url = String::new();
 
     if let Some(protocol) = http_url.get_protocol() {
@@ -211,17 +219,26 @@ pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) 
     }
 
     if let Some(path) = http_url.get_path() {
-        url.push_str(&percent_encoding::utf8_percent_encode(path, percent_encoding::DEFAULT_ENCODE_SET).to_string());
+        url.push_str(
+            &percent_encoding::utf8_percent_encode(path, percent_encoding::DEFAULT_ENCODE_SET)
+                .to_string(),
+        );
     }
 
     if let Some(query) = http_url.get_query() {
         url.push('?');
-        url.push_str(&percent_encoding::utf8_percent_encode(query, percent_encoding::QUERY_ENCODE_SET).to_string());
+        url.push_str(
+            &percent_encoding::utf8_percent_encode(query, percent_encoding::QUERY_ENCODE_SET)
+                .to_string(),
+        );
     }
 
     if let Some(fragment) = http_url.get_fragment() {
         url.push('#');
-        url.push_str(&percent_encoding::utf8_percent_encode(fragment, percent_encoding::QUERY_ENCODE_SET).to_string());
+        url.push_str(
+            &percent_encoding::utf8_percent_encode(fragment, percent_encoding::QUERY_ENCODE_SET)
+                .to_string(),
+        );
     }
 
     let chars: Vec<char> = url.chars().collect();
@@ -231,7 +248,10 @@ pub fn optimize_validated_http_url_segments(http_url: &HttpUrl, ecc: QrCodeEcc) 
 
 #[cfg(feature = "validator")]
 /// Optimize URL text for generating QR code.
-pub fn optimize_validated_http_ftp_url_segments(http_ftp_url: &HttpFtpUrl, ecc: QrCodeEcc) -> Result<Vec<QrSegment>, io::Error> {
+pub fn optimize_validated_http_ftp_url_segments(
+    http_ftp_url: &HttpFtpUrl,
+    ecc: QrCodeEcc,
+) -> Result<Vec<QrSegment>, io::Error> {
     let mut url = String::new();
 
     if let Some(protocol) = http_ftp_url.get_protocol() {
@@ -264,17 +284,26 @@ pub fn optimize_validated_http_ftp_url_segments(http_ftp_url: &HttpFtpUrl, ecc: 
     }
 
     if let Some(path) = http_ftp_url.get_path() {
-        url.push_str(&percent_encoding::utf8_percent_encode(path, percent_encoding::DEFAULT_ENCODE_SET).to_string());
+        url.push_str(
+            &percent_encoding::utf8_percent_encode(path, percent_encoding::DEFAULT_ENCODE_SET)
+                .to_string(),
+        );
     }
 
     if let Some(query) = http_ftp_url.get_query() {
         url.push('?');
-        url.push_str(&percent_encoding::utf8_percent_encode(query, percent_encoding::QUERY_ENCODE_SET).to_string());
+        url.push_str(
+            &percent_encoding::utf8_percent_encode(query, percent_encoding::QUERY_ENCODE_SET)
+                .to_string(),
+        );
     }
 
     if let Some(fragment) = http_ftp_url.get_fragment() {
         url.push('#');
-        url.push_str(&percent_encoding::utf8_percent_encode(fragment, percent_encoding::QUERY_ENCODE_SET).to_string());
+        url.push_str(
+            &percent_encoding::utf8_percent_encode(fragment, percent_encoding::QUERY_ENCODE_SET)
+                .to_string(),
+        );
     }
 
     let chars: Vec<char> = url.chars().collect();
@@ -294,7 +323,7 @@ fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, io
 
             let qr = match QrCode::encode_segments(&segments, ecc) {
                 Ok(qr) => qr,
-                Err(_) => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+                Err(_) => return Err(io::Error::new(ErrorKind::Other, "the data is too long")),
             };
 
             Ok(qr)
@@ -302,7 +331,7 @@ fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, io
         Err(_) => {
             let qr = match QrCode::encode_binary(data, ecc) {
                 Ok(qr) => qr,
-                Err(_) => return Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+                Err(_) => return Err(io::Error::new(ErrorKind::Other, "the data is too long")),
             };
 
             Ok(qr)
@@ -311,10 +340,13 @@ fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, io
 }
 
 #[inline]
-fn generate_qrcode_by_segments(segments: &[QrSegment], ecc: QrCodeEcc) -> Result<QrCode, io::Error> {
+fn generate_qrcode_by_segments(
+    segments: &[QrSegment],
+    ecc: QrCodeEcc,
+) -> Result<QrCode, io::Error> {
     match QrCode::encode_segments(segments, ecc) {
         Ok(qr) => Ok(qr),
-        Err(_) => Err(io::Error::new(ErrorKind::Other, "the data is too long"))
+        Err(_) => Err(io::Error::new(ErrorKind::Other, "the data is too long")),
     }
 }
 
@@ -345,12 +377,20 @@ pub fn to_matrix<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<Vec<Vec<bool
 }
 
 /// Encode data to a QR code matrix.
-pub fn to_matrix_by_segments(segments: &[QrSegment], ecc: QrCodeEcc) -> Result<Vec<Vec<bool>>, io::Error> {
+pub fn to_matrix_by_segments(
+    segments: &[QrSegment],
+    ecc: QrCodeEcc,
+) -> Result<Vec<Vec<bool>>, io::Error> {
     Ok(to_matrix_inner(generate_qrcode_by_segments(segments, ecc)?))
 }
 
 #[inline]
-fn to_svg_inner<W: Write>(qr: QrCode, size: usize, description: Option<&str>, mut writer: W) -> Result<(), io::Error> {
+fn to_svg_inner<W: Write>(
+    qr: QrCode,
+    size: usize,
+    description: Option<&str>,
+    mut writer: W,
+) -> Result<(), io::Error> {
     let margin_size = 1;
 
     let s = qr.size();
@@ -369,45 +409,45 @@ fn to_svg_inner<W: Write>(qr: QrCode, size: usize, description: Option<&str>, mu
 
     let size = size.to_string();
 
-    writer.write(b"<?xml version=\"1.0\" encoding=\"utf-8\"?>")?;
+    writer.write_all(b"<?xml version=\"1.0\" encoding=\"utf-8\"?>")?;
 
-    writer.write(b"<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"")?;
+    writer.write_all(b"<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"")?;
 
-    writer.write(size.as_bytes())?;
+    writer.write_all(size.as_bytes())?;
 
-    writer.write(b"\" height=\"")?;
+    writer.write_all(b"\" height=\"")?;
 
-    writer.write(size.as_bytes())?;
+    writer.write_all(size.as_bytes())?;
 
-    writer.write(b"\">")?;
+    writer.write_all(b"\">")?;
 
     match description {
         Some(description) => {
             if !description.is_empty() {
-                writer.write(b"<desc>")?;
-                writer.write(htmlescape::encode_minimal(description).as_bytes())?;
-                writer.write(b"</desc>")?;
+                writer.write_all(b"<desc>")?;
+                writer.write_all(htmlescape::encode_minimal(description).as_bytes())?;
+                writer.write_all(b"</desc>")?;
             }
         }
         None => {
-            writer.write(b"<desc>")?;
-            writer.write(env!("CARGO_PKG_NAME").as_bytes())?;
-            writer.write(b" ")?;
-            writer.write(env!("CARGO_PKG_VERSION").as_bytes())?;
-            writer.write(b" by magiclen.org")?;
-            writer.write(b"</desc>")?;
+            writer.write_all(b"<desc>")?;
+            writer.write_all(env!("CARGO_PKG_NAME").as_bytes())?;
+            writer.write_all(b" ")?;
+            writer.write_all(env!("CARGO_PKG_VERSION").as_bytes())?;
+            writer.write_all(b" by magiclen.org")?;
+            writer.write_all(b"</desc>")?;
         }
     }
 
-    writer.write(b"<rect width=\"")?;
+    writer.write_all(b"<rect width=\"")?;
 
-    writer.write(size.as_bytes())?;
+    writer.write_all(size.as_bytes())?;
 
-    writer.write(b"\" height=\"")?;
+    writer.write_all(b"\" height=\"")?;
 
-    writer.write(size.as_bytes())?;
+    writer.write_all(size.as_bytes())?;
 
-    writer.write(b"\" fill=\"#FFFFFF\" cx=\"0\" cy=\"0\" />")?;
+    writer.write_all(b"\" fill=\"#FFFFFF\" cx=\"0\" cy=\"0\" />")?;
 
     let point_size_string = point_size.to_string();
 
@@ -417,24 +457,24 @@ fn to_svg_inner<W: Write>(qr: QrCode, size: usize, description: Option<&str>, mu
                 let x = j as usize * point_size + margin;
                 let y = i as usize * point_size + margin;
 
-                writer.write(b"<rect x=\"")?;
-                writer.write(x.to_string().as_bytes())?;
+                writer.write_all(b"<rect x=\"")?;
+                writer.write_all(x.to_string().as_bytes())?;
 
-                writer.write(b"\" y=\"")?;
-                writer.write(y.to_string().as_bytes())?;
+                writer.write_all(b"\" y=\"")?;
+                writer.write_all(y.to_string().as_bytes())?;
 
-                writer.write(b"\" width=\"")?;
-                writer.write(point_size_string.as_bytes())?;
+                writer.write_all(b"\" width=\"")?;
+                writer.write_all(point_size_string.as_bytes())?;
 
-                writer.write(b"\" height=\"")?;
-                writer.write(point_size_string.as_bytes())?;
+                writer.write_all(b"\" height=\"")?;
+                writer.write_all(point_size_string.as_bytes())?;
 
-                writer.write(b"\" fill=\"#000000\" shape-rendering=\"crispEdges\" />")?;
+                writer.write_all(b"\" fill=\"#000000\" shape-rendering=\"crispEdges\" />")?;
             }
         }
     }
 
-    writer.write(b"</svg>")?;
+    writer.write_all(b"</svg>")?;
 
     writer.flush()?;
 
@@ -442,17 +482,33 @@ fn to_svg_inner<W: Write>(qr: QrCode, size: usize, description: Option<&str>, mu
 }
 
 /// Encode data to a SVG image via any writer.
-pub fn to_svg<D: AsRef<[u8]>, W: Write>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>, writer: W) -> Result<(), io::Error> {
+pub fn to_svg<D: AsRef<[u8]>, W: Write>(
+    data: D,
+    ecc: QrCodeEcc,
+    size: usize,
+    description: Option<&str>,
+    writer: W,
+) -> Result<(), io::Error> {
     to_svg_inner(generate_qrcode(data, ecc)?, size, description, writer)
 }
 
 /// Encode data to a SVG image via any writer.
-pub fn to_svg_by_segments<W: Write>(segments: &[QrSegment], ecc: QrCodeEcc, size: usize, description: Option<&str>, writer: W) -> Result<(), io::Error> {
+pub fn to_svg_by_segments<W: Write>(
+    segments: &[QrSegment],
+    ecc: QrCodeEcc,
+    size: usize,
+    description: Option<&str>,
+    writer: W,
+) -> Result<(), io::Error> {
     to_svg_inner(generate_qrcode_by_segments(segments, ecc)?, size, description, writer)
 }
 
 #[inline]
-fn to_svg_to_string_inner(qr: QrCode, size: usize, description: Option<&str>) -> Result<String, io::Error> {
+fn to_svg_to_string_inner(
+    qr: QrCode,
+    size: usize,
+    description: Option<&str>,
+) -> Result<String, io::Error> {
     let temp = RefCell::new(Some(Vec::new()));
 
     let temp_rc = Rc::new(temp);
@@ -465,34 +521,61 @@ fn to_svg_to_string_inner(qr: QrCode, size: usize, description: Option<&str>) ->
 }
 
 /// Encode data to a SVG image in memory.
-pub fn to_svg_to_string<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>) -> Result<String, io::Error> {
+pub fn to_svg_to_string<D: AsRef<[u8]>>(
+    data: D,
+    ecc: QrCodeEcc,
+    size: usize,
+    description: Option<&str>,
+) -> Result<String, io::Error> {
     to_svg_to_string_inner(generate_qrcode(data, ecc)?, size, description)
 }
 
 /// Encode data to a SVG image in memory.
-pub fn to_svg_to_string_by_segments(segments: &[QrSegment], ecc: QrCodeEcc, size: usize, description: Option<&str>) -> Result<String, io::Error> {
+pub fn to_svg_to_string_by_segments(
+    segments: &[QrSegment],
+    ecc: QrCodeEcc,
+    size: usize,
+    description: Option<&str>,
+) -> Result<String, io::Error> {
     to_svg_to_string_inner(generate_qrcode_by_segments(segments, ecc)?, size, description)
 }
 
 #[inline]
-fn to_svg_to_file_inner<P: AsRef<Path>>(qr: QrCode, size: usize, description: Option<&str>, path: P) -> Result<(), io::Error> {
+fn to_svg_to_file_inner<P: AsRef<Path>>(
+    qr: QrCode,
+    size: usize,
+    description: Option<&str>,
+    path: P,
+) -> Result<(), io::Error> {
     let path = path.as_ref();
 
     let file = File::create(path)?;
 
     to_svg_inner(qr, size, description, file).map_err(|err| {
-        if let Err(_) = fs::remove_file(path) {}
+        if fs::remove_file(path).is_err() {}
         err
     })
 }
 
 /// Encode data to a SVG image via a file path.
-pub fn to_svg_to_file<D: AsRef<[u8]>, P: AsRef<Path>>(data: D, ecc: QrCodeEcc, size: usize, description: Option<&str>, path: P) -> Result<(), io::Error> {
+pub fn to_svg_to_file<D: AsRef<[u8]>, P: AsRef<Path>>(
+    data: D,
+    ecc: QrCodeEcc,
+    size: usize,
+    description: Option<&str>,
+    path: P,
+) -> Result<(), io::Error> {
     to_svg_to_file_inner(generate_qrcode(data, ecc)?, size, description, path)
 }
 
 /// Encode data to a SVG image via a file path.
-pub fn to_svg_to_file_by_segments<P: AsRef<Path>>(segments: &[QrSegment], ecc: QrCodeEcc, size: usize, description: Option<&str>, path: P) -> Result<(), io::Error> {
+pub fn to_svg_to_file_by_segments<P: AsRef<Path>>(
+    segments: &[QrSegment],
+    ecc: QrCodeEcc,
+    size: usize,
+    description: Option<&str>,
+    path: P,
+) -> Result<(), io::Error> {
     to_svg_to_file_inner(generate_qrcode_by_segments(segments, ecc)?, size, description, path)
 }
 
@@ -538,31 +621,51 @@ fn to_image_inner(qr: QrCode, size: usize) -> Result<Vec<u8>, io::Error> {
 }
 
 /// Encode data to image data stored in a Vec instance.
-pub fn to_image<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
+pub fn to_image<D: AsRef<[u8]>>(
+    data: D,
+    ecc: QrCodeEcc,
+    size: usize,
+) -> Result<Vec<u8>, io::Error> {
     to_image_inner(generate_qrcode(data, ecc)?, size)
 }
 
 /// Encode data to image data stored in a Vec instance.
-pub fn to_image_by_segments(segments: &[QrSegment], ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
+pub fn to_image_by_segments(
+    segments: &[QrSegment],
+    ecc: QrCodeEcc,
+    size: usize,
+) -> Result<Vec<u8>, io::Error> {
     to_image_inner(generate_qrcode_by_segments(segments, ecc)?, size)
 }
 
 #[inline]
-fn to_image_buffer_inner(qr: QrCode, size: usize) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, io::Error> {
+fn to_image_buffer_inner(
+    qr: QrCode,
+    size: usize,
+) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, io::Error> {
     let img_raw = to_image_inner(qr, size)?;
 
-    let img: ImageBuffer<Luma<u8>, Vec<u8>> = ImageBuffer::from_vec(size as u32, size as u32, img_raw).unwrap();
+    let img: ImageBuffer<Luma<u8>, Vec<u8>> =
+        ImageBuffer::from_vec(size as u32, size as u32, img_raw).unwrap();
 
     Ok(img)
 }
 
 /// Encode data to a image buffer.
-pub fn to_image_buffer<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, io::Error> {
+pub fn to_image_buffer<D: AsRef<[u8]>>(
+    data: D,
+    ecc: QrCodeEcc,
+    size: usize,
+) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, io::Error> {
     to_image_buffer_inner(generate_qrcode(data, ecc)?, size)
 }
 
 /// Encode data to a image buffer.
-pub fn to_image_buffer_by_segments(segments: &[QrSegment], ecc: QrCodeEcc, size: usize) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, io::Error> {
+pub fn to_image_buffer_by_segments(
+    segments: &[QrSegment],
+    ecc: QrCodeEcc,
+    size: usize,
+) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, io::Error> {
     to_image_buffer_inner(generate_qrcode_by_segments(segments, ecc)?, size)
 }
 
@@ -576,12 +679,22 @@ fn to_png_inner<W: Write>(qr: QrCode, size: usize, writer: W) -> Result<(), io::
 }
 
 /// Encode data to a PNG image via any writer.
-pub fn to_png<D: AsRef<[u8]>, W: Write>(data: D, ecc: QrCodeEcc, size: usize, writer: W) -> Result<(), io::Error> {
+pub fn to_png<D: AsRef<[u8]>, W: Write>(
+    data: D,
+    ecc: QrCodeEcc,
+    size: usize,
+    writer: W,
+) -> Result<(), io::Error> {
     to_png_inner(generate_qrcode(data, ecc)?, size, writer)
 }
 
 /// Encode data to a PNG image via any writer.
-pub fn to_png_by_segments<W: Write>(segments: &[QrSegment], ecc: QrCodeEcc, size: usize, writer: W) -> Result<(), io::Error> {
+pub fn to_png_by_segments<W: Write>(
+    segments: &[QrSegment],
+    ecc: QrCodeEcc,
+    size: usize,
+    writer: W,
+) -> Result<(), io::Error> {
     to_png_inner(generate_qrcode_by_segments(segments, ecc)?, size, writer)
 }
 
@@ -599,12 +712,20 @@ fn to_png_to_vec_inner(qr: QrCode, size: usize) -> Result<Vec<u8>, io::Error> {
 }
 
 /// Encode data to a PNG image in memory.
-pub fn to_png_to_vec<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
+pub fn to_png_to_vec<D: AsRef<[u8]>>(
+    data: D,
+    ecc: QrCodeEcc,
+    size: usize,
+) -> Result<Vec<u8>, io::Error> {
     to_png_to_vec_inner(generate_qrcode(data, ecc)?, size)
 }
 
 /// Encode data to a PNG image in memory.
-pub fn to_png_to_vec_by_segments(segments: &[QrSegment], ecc: QrCodeEcc, size: usize) -> Result<Vec<u8>, io::Error> {
+pub fn to_png_to_vec_by_segments(
+    segments: &[QrSegment],
+    ecc: QrCodeEcc,
+    size: usize,
+) -> Result<Vec<u8>, io::Error> {
     to_png_to_vec_inner(generate_qrcode_by_segments(segments, ecc)?, size)
 }
 
@@ -615,17 +736,27 @@ fn to_png_to_file_inner<P: AsRef<Path>>(qr: QrCode, size: usize, path: P) -> Res
     let file = File::create(path)?;
 
     to_png_inner(qr, size, file).map_err(|err| {
-        if let Err(_) = fs::remove_file(path) {}
+        if fs::remove_file(path).is_err() {}
         err
     })
 }
 
 /// Encode data to a PNG image via a file path.
-pub fn to_png_to_file<D: AsRef<[u8]>, P: AsRef<Path>>(data: D, ecc: QrCodeEcc, size: usize, path: P) -> Result<(), io::Error> {
+pub fn to_png_to_file<D: AsRef<[u8]>, P: AsRef<Path>>(
+    data: D,
+    ecc: QrCodeEcc,
+    size: usize,
+    path: P,
+) -> Result<(), io::Error> {
     to_png_to_file_inner(generate_qrcode(data, ecc)?, size, path)
 }
 
 /// Encode data to a PNG image via a file path.
-pub fn to_png_to_file_by_segments<P: AsRef<Path>>(segments: &[QrSegment], ecc: QrCodeEcc, size: usize, path: P) -> Result<(), io::Error> {
+pub fn to_png_to_file_by_segments<P: AsRef<Path>>(
+    segments: &[QrSegment],
+    ecc: QrCodeEcc,
+    size: usize,
+    path: P,
+) -> Result<(), io::Error> {
     to_png_to_file_inner(generate_qrcode_by_segments(segments, ecc)?, size, path)
 }
