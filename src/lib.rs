@@ -526,7 +526,7 @@ fn to_png_inner<W: Write>(qr: QrCode, size: usize, writer: W) -> Result<(), io::
 
     let encoder = PNGEncoder::new(writer);
 
-    encoder.encode(&img_raw, size as u32, size as u32, ColorType::Gray(8))
+    encoder.encode(&img_raw, size as u32, size as u32, ColorType::L8).map_err(|err| io::Error::new(ErrorKind::Other, err.to_string()))
 }
 
 /// Encode data to a PNG image via any writer.
