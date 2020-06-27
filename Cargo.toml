@@ -10,6 +10,7 @@ categories = ["encoding", "multimedia::images"]
 description= "Generate QR Code matrices and images in RAW, PNG and SVG formats."
 readme = "README.md"
 license = "MIT"
+include = ["src/**/*", "Cargo.toml"]
 
 [badges.travis-ci]
 repository = "magiclen/qrcode-generator"
