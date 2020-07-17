@@ -12,7 +12,7 @@ os:
 
 env:
   -
-  - FEATURES="validator"
+  - NO_DEFAULT_FEATURES=1
 
 script:
   - if [ "$NO_DEFAULT_FEATURES" = "1" ]; then NO_DEFAULT_FEATURES="--no-default-features"; else NO_DEFAULT_FEATURES=""; fi

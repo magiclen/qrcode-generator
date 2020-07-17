@@ -7,7 +7,7 @@ This crate provides functions to generate QR Code matrices and images in RAW, PN
 
 ## Examples
 
-### Encode any data to a QR Code matrix which is `Vec<Vec<bool>>`.
+#### Encode any data to a QR Code matrix which is `Vec<Vec<bool>>`.
 
 ```rust
 extern crate qrcode_generator;
@@ -19,7 +19,7 @@ let result: Vec<Vec<bool>> = qrcode_generator::to_matrix("Hello world!", QrCodeE
 println!("{:?}", result);
 ```
 
-### Encode any data to a PNG image stored in a Vec instance.
+#### Encode any data to a PNG image stored in a Vec instance.
 
 ```rust
 extern crate qrcode_generator;
@@ -31,36 +31,36 @@ let result: Vec<u8> = qrcode_generator::to_png_to_vec("Hello world!", QrCodeEcc:
 println!("{:?}", result);
 ```
 
-### Encode any data to a PNG image stored in a file.
+#### Encode any data to a PNG image stored in a file.
 
 ```rust
 extern crate qrcode_generator;
 
 use qrcode_generator::QrCodeEcc;
 
-qrcode_generator::to_png_to_file("Hello world!", QrCodeEcc::Low, 1024, "path/to/file.png").unwrap();
+qrcode_generator::to_png_to_file("Hello world!", QrCodeEcc::Low, 1024, "tests/data/file_output.png").unwrap();
 ```
 
-### Encode any data to a SVG image stored in a String instance.
+#### Encode any data to a SVG image stored in a String instance.
 
 ```rust
 extern crate qrcode_generator;
 
 use qrcode_generator::QrCodeEcc;
 
-let result: String = qrcode_generator::to_svg_to_string("Hello world!", QrCodeEcc::Low, 1024, None).unwrap();
+let result: String = qrcode_generator::to_svg_to_string("Hello world!", QrCodeEcc::Low, 1024, None::<&str>).unwrap();
 
 println!("{:?}", result);
 ```
 
-### Encode any data to a SVG image stored in a file.
+#### Encode any data to a SVG image stored in a file.
 
 ```rust
 extern crate qrcode_generator;
 
 use qrcode_generator::QrCodeEcc;
 
-qrcode_generator::to_svg_to_file("Hello world!", QrCodeEcc::Low, 1024, None, "path/to/file.svg").unwrap();
+qrcode_generator::to_svg_to_file("Hello world!", QrCodeEcc::Low, 1024, None::<&str>, "tests/data/file_output.png").unwrap();
 ```
 
 ## Low-level Usage
@@ -71,13 +71,12 @@ The `to_image` and `to_image_buffer` functions can be used, if you want to modif
 
 ### Segments
 
-Every **generate** and **to** function has its own **by_segments** function. You can concatenate segments by using different encoding methods, such as **numeric**, **alphanumeric** or **binary** to reduce the size (level) of your QR code matrix/image.
+Every `to_*` function has a corresponding `_from_segments` function. You can concatenate segments by using different encoding methods, such as **numeric**, **alphanumeric** or **binary** to reduce the size (level) of your QR code matrix/image.
 
 ```rust
 extern crate qrcode_generator;
 
-use qrcode_generator::QrCodeEcc;
-use qrcode_generator::qrcodegen::QrSegment;
+use qrcode_generator::{QrCodeEcc, QrSegment};
 
 let first = "1234567";
 
@@ -86,47 +85,11 @@ let second = "ABCDEFG";
 let first_chars: Vec<char> = first.chars().collect();
 let second_chars: Vec<char> = second.chars().collect();
 
-let segments = vec![QrSegment::make_numeric(&first_chars), QrSegment::make_alphanumeric(&second_chars)];
+let segments = [QrSegment::make_numeric(&first_chars), QrSegment::make_alphanumeric(&second_chars)];
 
-let result: Vec<Vec<bool>> = qrcode_generator::to_matrix_by_segments(&segments, QrCodeEcc::Low).unwrap();
+let result: Vec<Vec<bool>> = qrcode_generator::to_matrix_from_segments(&segments, QrCodeEcc::Low).unwrap();
 
 println!("{:?}", result);
-```
-
-## Validators Support
-
-`Validators` is a crate which can help you validate user input.
-
-To use with Validators support, you have to enable the **validator** feature for this crate.
-
-```toml
-[dependencies.qrcode-generator]
-version = "*"
-features = ["validator"]
-```
-
-And the `optimize_validated_http_url_segments` and `optimize_validated_http_ftp_url_segments` functions are available. They can be used for generating a safe and optimized (as small as possible) URL QR Code.
-
-```rust
-extern crate qrcode_generator;
-extern crate validators;
-
-use qrcode_generator::QrCodeEcc;
-use validators::{ValidatorOption, http_url::HttpUrlValidator};
-
-let validator = HttpUrlValidator {
-    protocol: ValidatorOption::Allow,
-    local: ValidatorOption::Allow,
-};
-
-let url = "https://magiclen.org/path/to/12345";
-
-let validated_http_url = validator.parse_str(url).unwrap();
-
-let matrix_1 = qrcode_generator::to_matrix(url, QrCodeEcc::Low).unwrap();
-let matrix_2 = qrcode_generator::to_matrix_by_segments(&qrcode_generator::optimize_validated_http_url_segments(&validated_http_url), QrCodeEcc::Low).unwrap();
-
-assert!(matrix_2.len() < matrix_1.len());
 ```
 
 ## Crates.io
