@@ -62,7 +62,9 @@ extern crate qrcode_generator;
 
 use qrcode_generator::QrCodeEcc;
 
+# #[cfg(feature = "std")] {
 qrcode_generator::to_svg_to_file("Hello world!", QrCodeEcc::Low, 1024, None::<&str>, "tests/data/file_output.png").unwrap();
+# }
 ```
 
 ## Low-level Usage
@@ -93,20 +95,34 @@ let result: Vec<Vec<bool>> = qrcode_generator::to_matrix_from_segments(&segments
 
 println!("{:?}", result);
 ```
+
+## No Std
+
+Disable the default features to compile this crate without std.
+
+```toml
+[dependencies.qrcode-generator]
+version = "*"
+default-features = false
+```
 */
 
 extern crate html_escape;
 pub extern crate qrcodegen;
 
 #[cfg(feature = "image")]
-extern crate image;
+extern crate image_dep as image;
 
 mod qr_code_error;
 
+use core::str::from_utf8;
+
+#[cfg(feature = "std")]
 use std::fs::{self, File};
+#[cfg(feature = "std")]
 use std::io::Write;
+#[cfg(feature = "std")]
 use std::path::Path;
-use std::str::from_utf8;
 
 pub use qr_code_error::*;
 
@@ -179,6 +195,7 @@ fn to_matrix_inner(qr: QrCode) -> Vec<Vec<bool>> {
     rows
 }
 
+#[cfg(feature = "std")]
 #[inline]
 fn to_svg_inner<S: AsRef<str>, W: Write>(
     qr: QrCode,
@@ -279,18 +296,115 @@ fn to_svg_inner<S: AsRef<str>, W: Write>(
 }
 
 #[inline]
+fn to_svg_to_vec_inner<S: AsRef<str>>(
+    qr: QrCode,
+    size: usize,
+    description: Option<S>,
+) -> Result<Vec<u8>, QRCodeError> {
+    let mut svg = Vec::with_capacity(32768);
+
+    let margin_size = 1;
+
+    let s = qr.size();
+
+    let data_length = s as usize;
+
+    let data_length_with_margin = data_length + 2 * margin_size;
+
+    let point_size = size / data_length_with_margin;
+
+    if point_size == 0 {
+        return Err(QRCodeError::ImageSizeTooSmall);
+    }
+
+    let margin = (size - (point_size * data_length)) / 2;
+
+    let size = format!("{}", size);
+
+    svg.extend_from_slice(b"<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+
+    svg.extend_from_slice(b"<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"");
+
+    svg.extend_from_slice(size.as_bytes());
+
+    svg.extend_from_slice(b"\" height=\"");
+
+    svg.extend_from_slice(size.as_bytes());
+
+    svg.extend_from_slice(b"\">");
+
+    match description {
+        Some(description) => {
+            let description = description.as_ref();
+
+            if !description.is_empty() {
+                svg.extend_from_slice(b"<desc>");
+                html_escape::encode_safe_to_writer(description, &mut svg)?;
+                svg.extend_from_slice(b"</desc>");
+            }
+        }
+        None => {
+            svg.extend_from_slice(b"<desc>");
+            svg.extend_from_slice(env!("CARGO_PKG_NAME").as_bytes());
+            svg.extend_from_slice(b" ");
+            svg.extend_from_slice(env!("CARGO_PKG_VERSION").as_bytes());
+            svg.extend_from_slice(b" by magiclen.org");
+            svg.extend_from_slice(b"</desc>");
+        }
+    }
+
+    svg.extend_from_slice(b"<rect width=\"");
+
+    svg.extend_from_slice(size.as_bytes());
+
+    svg.extend_from_slice(b"\" height=\"");
+
+    svg.extend_from_slice(size.as_bytes());
+
+    svg.extend_from_slice(b"\" fill=\"#FFFFFF\" cx=\"0\" cy=\"0\" />");
+
+    let point_size_string = format!("{}", point_size);
+
+    for i in 0..s {
+        for j in 0..s {
+            if qr.get_module(j, i) {
+                let x = j as usize * point_size + margin;
+                let y = i as usize * point_size + margin;
+
+                svg.extend_from_slice(b"<rect x=\"");
+                svg.extend_from_slice(x.to_string().as_bytes());
+
+                svg.extend_from_slice(b"\" y=\"");
+                svg.extend_from_slice(y.to_string().as_bytes());
+
+                svg.extend_from_slice(b"\" width=\"");
+                svg.extend_from_slice(point_size_string.as_bytes());
+
+                svg.extend_from_slice(b"\" height=\"");
+                svg.extend_from_slice(point_size_string.as_bytes());
+
+                svg.extend_from_slice(b"\" fill=\"#000000\" shape-rendering=\"crispEdges\" />");
+            }
+        }
+    }
+
+    svg.extend_from_slice(b"</svg>");
+
+    Ok(svg)
+}
+
+#[inline]
 fn to_svg_to_string_inner<S: AsRef<str>>(
     qr: QrCode,
     size: usize,
     description: Option<S>,
 ) -> Result<String, QRCodeError> {
-    let mut svg = Vec::with_capacity(32768);
-
-    to_svg_inner(qr, size, description, &mut svg)?;
+    let svg = to_svg_to_vec_inner(qr, size, description)?;
 
     Ok(unsafe { String::from_utf8_unchecked(svg) })
 }
 
+#[cfg(feature = "std")]
 #[inline]
 fn to_svg_to_file_inner<S: AsRef<str>, P: AsRef<Path>>(
     qr: QrCode,
@@ -486,6 +600,7 @@ pub fn to_svg_to_string_from_segments<DESC: AsRef<str>>(
     to_svg_to_string_inner(generate_qrcode_from_segments(segments, ecc)?, size, description)
 }
 
+#[cfg(feature = "std")]
 /// Encode data to a SVG image via a file path.
 #[inline]
 pub fn to_svg_to_file<D: AsRef<[u8]>, DESC: AsRef<str>, P: AsRef<Path>>(
@@ -498,6 +613,7 @@ pub fn to_svg_to_file<D: AsRef<[u8]>, DESC: AsRef<str>, P: AsRef<Path>>(
     to_svg_to_file_inner(generate_qrcode(data, ecc)?, size, description, path)
 }
 
+#[cfg(feature = "std")]
 /// Encode text to a SVG image via a file path.
 #[inline]
 pub fn to_svg_to_file_from_str<S: AsRef<str>, DESC: AsRef<str>, P: AsRef<Path>>(
@@ -510,6 +626,7 @@ pub fn to_svg_to_file_from_str<S: AsRef<str>, DESC: AsRef<str>, P: AsRef<Path>>(
     to_svg_to_file_inner(generate_qrcode_from_str(text, ecc)?, size, description, path)
 }
 
+#[cfg(feature = "std")]
 /// Encode segments to a SVG image via a file path.
 #[inline]
 pub fn to_svg_to_file_from_segments<DESC: AsRef<str>, P: AsRef<Path>>(
@@ -522,6 +639,7 @@ pub fn to_svg_to_file_from_segments<DESC: AsRef<str>, P: AsRef<Path>>(
     to_svg_to_file_inner(generate_qrcode_from_segments(segments, ecc)?, size, description, path)
 }
 
+#[cfg(feature = "std")]
 /// Encode data to a SVG image via a writer.
 #[inline]
 pub fn to_svg_to_writer<D: AsRef<[u8]>, DESC: AsRef<str>, W: Write>(
@@ -534,6 +652,7 @@ pub fn to_svg_to_writer<D: AsRef<[u8]>, DESC: AsRef<str>, W: Write>(
     to_svg_inner(generate_qrcode(data, ecc)?, size, description, writer)
 }
 
+#[cfg(feature = "std")]
 /// Encode text to a SVG image via a writer.
 #[inline]
 pub fn to_svg_to_writer_from_str<S: AsRef<str>, DESC: AsRef<str>, W: Write>(
@@ -546,6 +665,7 @@ pub fn to_svg_to_writer_from_str<S: AsRef<str>, DESC: AsRef<str>, W: Write>(
     to_svg_inner(generate_qrcode_from_str(text, ecc)?, size, description, writer)
 }
 
+#[cfg(feature = "std")]
 /// Encode segments to a SVG image via a writer.
 #[inline]
 pub fn to_svg_to_writer_from_segments<DESC: AsRef<str>, W: Write>(

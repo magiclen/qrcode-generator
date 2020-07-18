@@ -92,6 +92,16 @@ let result: Vec<Vec<bool>> = qrcode_generator::to_matrix_from_segments(&segments
 println!("{:?}", result);
 ```
 
+## No Std
+
+Disable the default features to compile this crate without std.
+
+```toml
+[dependencies.qrcode-generator]
+version = "*"
+default-features = false
+```
+
 ## Crates.io
 
 https://crates.io/crates/qrcode-generator
