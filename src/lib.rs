@@ -96,6 +96,8 @@ let result: Vec<Vec<bool>> = qrcode_generator::to_matrix_from_segments(&segments
 println!("{:?}", result);
 ```
 
+More segments optimization apporaches: [magiclen/qrcode-segments-optimizer](https://github.com/magiclen/qrcode-segments-optimizer)
+
 ## No Std
 
 Disable the default features to compile this crate without std.
