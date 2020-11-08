@@ -20,7 +20,7 @@ branch = "master"
 qrcodegen = "1.6"
 html-escape = "0.2"
 
-image-dep = { package = "image", version = "0.23.7", optional = true }
+image-dep = { package = "image", version = "0.23.9", optional = true }
 
 [dev-dependencies]
 slash-formatter = "3"
