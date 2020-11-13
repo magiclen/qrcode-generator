@@ -133,7 +133,7 @@ use qrcodegen::QrCode;
 pub use qrcodegen::{QrCodeEcc, QrSegment};
 
 #[cfg(feature = "image")]
-use image::png::{CompressionType, FilterType, PNGEncoder};
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 
 #[cfg(feature = "image")]
 use image::{ColorType, ImageBuffer, Luma};
@@ -470,7 +470,7 @@ fn to_image_inner(qr: QrCode, size: usize) -> Result<Vec<u8>, QRCodeError> {
 fn to_png_inner<W: Write>(qr: QrCode, size: usize, writer: W) -> Result<(), QRCodeError> {
     let img_raw = to_image_inner(qr, size)?;
 
-    let encoder = PNGEncoder::new_with_quality(writer, CompressionType::Best, FilterType::NoFilter);
+    let encoder = PngEncoder::new_with_quality(writer, CompressionType::Best, FilterType::NoFilter);
 
     Ok(encoder.encode(&img_raw, size as u32, size as u32, ColorType::L8)?)
 }
