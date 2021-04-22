@@ -117,6 +117,7 @@ extern crate image_dep as image;
 
 mod qr_code_error;
 
+use core::mem::size_of;
 use core::str::from_utf8;
 
 #[cfg(feature = "std")]
@@ -424,8 +425,11 @@ fn to_svg_to_file_inner<S: AsRef<str>, P: AsRef<Path>>(
     })
 }
 
-#[inline]
 fn to_image_inner(qr: QrCode, size: usize) -> Result<Vec<u8>, QRCodeError> {
+    if size >= 2usize.pow((size_of::<usize>() * 4) as u32) {
+        return Err(QRCodeError::ImageSizeTooLarge);
+    }
+
     let margin_size = 1;
 
     let s = qr.size();

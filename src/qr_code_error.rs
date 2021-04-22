@@ -14,6 +14,7 @@ pub enum QRCodeError {
     #[cfg(feature = "image")]
     ImageError(ImageError),
     ImageSizeTooSmall,
+    ImageSizeTooLarge,
 }
 
 impl From<io::Error> for QRCodeError {
@@ -44,6 +45,7 @@ impl Display for QRCodeError {
             QRCodeError::ImageSizeTooSmall => {
                 f.write_str("image size is too small to draw the whole QR code")
             }
+            QRCodeError::ImageSizeTooLarge => f.write_str("image size is too large to generate"),
         }
     }
 }
