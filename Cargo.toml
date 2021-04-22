@@ -1,6 +1,6 @@
 [package]
 name = "qrcode-generator"
-version = "4.0.4"
+version = "4.0.5"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2018"
 repository = "https://github.com/magiclen/qrcode-generator"
@@ -11,10 +11,6 @@ description = "Generate QR Code matrices and images in RAW, PNG and SVG formats.
 readme = "README.md"
 license = "MIT"
 include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
-
-[badges.travis-ci]
-repository = "magiclen/qrcode-generator"
-branch = "master"
 
 [dependencies]
 qrcodegen = "1.6"

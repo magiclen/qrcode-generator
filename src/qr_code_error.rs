@@ -5,6 +5,7 @@ use std::io;
 #[cfg(feature = "image")]
 use crate::image::ImageError;
 
+#[allow(clippy::upper_case_acronyms)]
 /// Errors when encoding QR code.
 #[derive(Debug)]
 pub enum QRCodeError {
