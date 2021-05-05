@@ -1,14 +1,14 @@
 extern crate qrcode_generator;
 
 #[macro_use]
-extern crate slash_formatter;
+extern crate manifest_dir_macros;
 
 use std::fs;
 use std::path::Path;
 
 use qrcode_generator::QrCodeEcc;
 
-const FOLDER: &str = concat_with_file_separator!("tests", "data");
+const FOLDER: &str = directory_path!("tests/data");
 
 #[test]
 fn text_to_matrix() {
