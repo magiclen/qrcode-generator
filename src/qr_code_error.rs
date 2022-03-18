@@ -3,7 +3,7 @@ use std::fmt::{self, Display, Formatter};
 use std::io;
 
 #[cfg(feature = "image")]
-use crate::image::ImageError;
+use image::ImageError;
 
 #[allow(clippy::upper_case_acronyms)]
 /// Errors when encoding QR code.

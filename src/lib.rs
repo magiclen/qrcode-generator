@@ -8,8 +8,6 @@ This crate provides functions to generate QR Code matrices and images in RAW, PN
 #### Encode any data to a QR Code matrix which is `Vec<Vec<bool>>`.
 
 ```rust
-extern crate qrcode_generator;
-
 use qrcode_generator::QrCodeEcc;
 
 let result: Vec<Vec<bool>> = qrcode_generator::to_matrix("Hello world!", QrCodeEcc::Low).unwrap();
@@ -20,8 +18,6 @@ println!("{:?}", result);
 #### Encode any data to a PNG image stored in a Vec instance.
 
 ```rust
-extern crate qrcode_generator;
-
 use qrcode_generator::QrCodeEcc;
 
 # #[cfg(feature = "image")] {
@@ -34,8 +30,6 @@ println!("{:?}", result);
 #### Encode any data to a PNG image stored in a file.
 
 ```rust
-extern crate qrcode_generator;
-
 use qrcode_generator::QrCodeEcc;
 
 # #[cfg(feature = "image")] {
@@ -46,8 +40,6 @@ qrcode_generator::to_png_to_file("Hello world!", QrCodeEcc::Low, 1024, "tests/da
 #### Encode any data to a SVG image stored in a String instance.
 
 ```rust
-extern crate qrcode_generator;
-
 use qrcode_generator::QrCodeEcc;
 
 let result: String = qrcode_generator::to_svg_to_string("Hello world!", QrCodeEcc::Low, 1024, None::<&str>).unwrap();
@@ -58,13 +50,9 @@ println!("{:?}", result);
 #### Encode any data to a SVG image stored in a file.
 
 ```rust
-extern crate qrcode_generator;
-
 use qrcode_generator::QrCodeEcc;
 
-# #[cfg(feature = "std")] {
 qrcode_generator::to_svg_to_file("Hello world!", QrCodeEcc::Low, 1024, None::<&str>, "tests/data/file_output.png").unwrap();
-# }
 ```
 
 ## Low-level Usage
@@ -78,8 +66,6 @@ The `to_image` and `to_image_buffer` functions can be used, if you want to modif
 Every `to_*` function has a corresponding `_from_segments` function. You can concatenate segments by using different encoding methods, such as **numeric**, **alphanumeric** or **binary** to reduce the size (level) of your QR code matrix/image.
 
 ```rust
-extern crate qrcode_generator;
-
 use qrcode_generator::{QrCodeEcc, QrSegment};
 
 let first = "1234567";
@@ -97,19 +83,8 @@ println!("{:?}", result);
 ```
 
 More segments optimization apporaches: [magiclen/qrcode-segments-optimizer](https://github.com/magiclen/qrcode-segments-optimizer)
-
-## No Std
-
-Disable the default features to compile this crate without std.
-
-```toml
-[dependencies.qrcode-generator]
-version = "*"
-default-features = false
-```
 */
 
-extern crate html_escape;
 pub extern crate qrcodegen;
 
 #[cfg(feature = "image")]
@@ -120,11 +95,8 @@ mod qr_code_error;
 use core::mem::size_of;
 use core::str::from_utf8;
 
-#[cfg(feature = "std")]
 use std::fs::{self, File};
-#[cfg(feature = "std")]
 use std::io::Write;
-#[cfg(feature = "std")]
 use std::path::Path;
 
 pub use qr_code_error::*;
@@ -137,7 +109,7 @@ pub use qrcodegen::{QrCodeEcc, QrSegment};
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 
 #[cfg(feature = "image")]
-use image::{ColorType, ImageBuffer, Luma};
+use image::{ColorType, ImageBuffer, ImageEncoder, Luma};
 
 #[inline]
 fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, QRCodeError> {
@@ -198,7 +170,6 @@ fn to_matrix_inner(qr: QrCode) -> Vec<Vec<bool>> {
     rows
 }
 
-#[cfg(feature = "std")]
 #[inline]
 fn to_svg_inner<S: AsRef<str>, W: Write>(
     qr: QrCode,
@@ -407,7 +378,6 @@ fn to_svg_to_string_inner<S: AsRef<str>>(
     Ok(unsafe { String::from_utf8_unchecked(svg) })
 }
 
-#[cfg(feature = "std")]
 #[inline]
 fn to_svg_to_file_inner<S: AsRef<str>, P: AsRef<Path>>(
     qr: QrCode,
@@ -476,7 +446,7 @@ fn to_png_inner<W: Write>(qr: QrCode, size: usize, writer: W) -> Result<(), QRCo
 
     let encoder = PngEncoder::new_with_quality(writer, CompressionType::Best, FilterType::NoFilter);
 
-    Ok(encoder.encode(&img_raw, size as u32, size as u32, ColorType::L8)?)
+    Ok(encoder.write_image(&img_raw, size as u32, size as u32, ColorType::L8)?)
 }
 
 #[cfg(feature = "image")]
@@ -606,7 +576,6 @@ pub fn to_svg_to_string_from_segments<DESC: AsRef<str>>(
     to_svg_to_string_inner(generate_qrcode_from_segments(segments, ecc)?, size, description)
 }
 
-#[cfg(feature = "std")]
 /// Encode data to a SVG image via a file path.
 #[inline]
 pub fn to_svg_to_file<D: AsRef<[u8]>, DESC: AsRef<str>, P: AsRef<Path>>(
@@ -619,7 +588,6 @@ pub fn to_svg_to_file<D: AsRef<[u8]>, DESC: AsRef<str>, P: AsRef<Path>>(
     to_svg_to_file_inner(generate_qrcode(data, ecc)?, size, description, path)
 }
 
-#[cfg(feature = "std")]
 /// Encode text to a SVG image via a file path.
 #[inline]
 pub fn to_svg_to_file_from_str<S: AsRef<str>, DESC: AsRef<str>, P: AsRef<Path>>(
@@ -632,7 +600,6 @@ pub fn to_svg_to_file_from_str<S: AsRef<str>, DESC: AsRef<str>, P: AsRef<Path>>(
     to_svg_to_file_inner(generate_qrcode_from_str(text, ecc)?, size, description, path)
 }
 
-#[cfg(feature = "std")]
 /// Encode segments to a SVG image via a file path.
 #[inline]
 pub fn to_svg_to_file_from_segments<DESC: AsRef<str>, P: AsRef<Path>>(
@@ -645,7 +612,6 @@ pub fn to_svg_to_file_from_segments<DESC: AsRef<str>, P: AsRef<Path>>(
     to_svg_to_file_inner(generate_qrcode_from_segments(segments, ecc)?, size, description, path)
 }
 
-#[cfg(feature = "std")]
 /// Encode data to a SVG image via a writer.
 #[inline]
 pub fn to_svg_to_writer<D: AsRef<[u8]>, DESC: AsRef<str>, W: Write>(
@@ -658,7 +624,6 @@ pub fn to_svg_to_writer<D: AsRef<[u8]>, DESC: AsRef<str>, W: Write>(
     to_svg_inner(generate_qrcode(data, ecc)?, size, description, writer)
 }
 
-#[cfg(feature = "std")]
 /// Encode text to a SVG image via a writer.
 #[inline]
 pub fn to_svg_to_writer_from_str<S: AsRef<str>, DESC: AsRef<str>, W: Write>(
@@ -671,7 +636,6 @@ pub fn to_svg_to_writer_from_str<S: AsRef<str>, DESC: AsRef<str>, W: Write>(
     to_svg_inner(generate_qrcode_from_str(text, ecc)?, size, description, writer)
 }
 
-#[cfg(feature = "std")]
 /// Encode segments to a SVG image via a writer.
 #[inline]
 pub fn to_svg_to_writer_from_segments<DESC: AsRef<str>, W: Write>(

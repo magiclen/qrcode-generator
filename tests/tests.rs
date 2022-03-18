@@ -1,5 +1,3 @@
-extern crate qrcode_generator;
-
 #[macro_use]
 extern crate manifest_dir_macros;
 
@@ -113,7 +111,6 @@ fn text_to_svg_to_string() {
     assert_eq!(fs::read_to_string(Path::new(FOLDER).join("hello.svg")).unwrap(), result);
 }
 
-#[cfg(feature = "std")]
 #[test]
 fn text_to_svg_to_file() {
     qrcode_generator::to_svg_to_file(

@@ -1,12 +1,12 @@
 [package]
 name = "qrcode-generator"
-version = "4.1.2"
+version = "4.1.3"
 authors = ["Magic Len <len@magiclen.org>"]
-edition = "2018"
+edition = "2021"
 repository = "https://github.com/magiclen/qrcode-generator"
 homepage = "https://magiclen.org/qrcode-generator"
 keywords = ["qrcode", "generate", "png", "svg", "vec"]
-categories = ["no-std", "encoding", "multimedia::images"]
+categories = ["encoding", "multimedia::images"]
 description = "Generate QR Code matrices and images in RAW, PNG and SVG formats."
 readme = "README.md"
 license = "MIT"
@@ -16,16 +16,16 @@ include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 qrcodegen = "1.7"
 html-escape = "0.2"
 
-image-dep = { package = "image", version = "0.23.9", optional = true }
+image-dep = { package = "image", version = "0.24", optional = true }
+crossbeam-epoch = { version = "=0.9.7", optional = true } # 0.9.8 cannot be compiled
 
 [dev-dependencies]
 manifest-dir-macros = "0.1"
 
 [features]
 default = ["image"]
-std = []
 
-image = ["std", "image-dep"]
+image = ["image-dep", "crossbeam-epoch"]
 
 [package.metadata.docs.rs]
 all-features = true
