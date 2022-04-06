@@ -1,6 +1,6 @@
 [package]
 name = "qrcode-generator"
-version = "4.1.3"
+version = "4.1.4"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2021"
 repository = "https://github.com/magiclen/qrcode-generator"
@@ -17,7 +17,6 @@ qrcodegen = "1.7"
 html-escape = "0.2"
 
 image-dep = { package = "image", version = "0.24", optional = true }
-crossbeam-epoch = { version = "=0.9.7", optional = true } # 0.9.8 cannot be compiled
 
 [dev-dependencies]
 manifest-dir-macros = "0.1"
@@ -25,7 +24,7 @@ manifest-dir-macros = "0.1"
 [features]
 default = ["image"]
 
-image = ["image-dep", "crossbeam-epoch"]
+image = ["image-dep"]
 
 [package.metadata.docs.rs]
 all-features = true
