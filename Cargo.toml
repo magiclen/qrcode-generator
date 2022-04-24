@@ -1,6 +1,6 @@
 [package]
 name = "qrcode-generator"
-version = "4.1.4"
+version = "4.1.5"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2021"
 repository = "https://github.com/magiclen/qrcode-generator"
@@ -13,7 +13,7 @@ license = "MIT"
 include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 
 [dependencies]
-qrcodegen = "1.7"
+qrcodegen = "1.8"
 html-escape = "0.2"
 
 image-dep = { package = "image", version = "0.24", optional = true }
