@@ -70,10 +70,7 @@ let first = "1234567";
 
 let second = "ABCDEFG";
 
-let first_chars: Vec<char> = first.chars().collect();
-let second_chars: Vec<char> = second.chars().collect();
-
-let segments = [QrSegment::make_numeric(&first_chars), QrSegment::make_alphanumeric(&second_chars)];
+let segments = [QrSegment::make_numeric(&first), QrSegment::make_alphanumeric(&second)];
 
 let result: Vec<Vec<bool>> = qrcode_generator::to_matrix_from_segments(&segments, QrCodeEcc::Low).unwrap();
 

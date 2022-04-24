@@ -1,6 +1,6 @@
 [package]
 name = "qrcode-generator"
-version = "4.1.5"
+version = "4.1.6"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2021"
 repository = "https://github.com/magiclen/qrcode-generator"
