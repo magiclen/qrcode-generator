@@ -16,15 +16,13 @@ include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 qrcodegen = "1.8"
 html-escape = "0.2"
 
-image-dep = { package = "image", version = "0.24", optional = true }
+image = { version = "0.24", optional = true }
 
 [dev-dependencies]
 manifest-dir-macros = "0.1"
 
 [features]
 default = ["image"]
-
-image = ["image-dep"]
 
 [package.metadata.docs.rs]
 all-features = true

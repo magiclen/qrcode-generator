@@ -84,9 +84,6 @@ More segments optimization apporaches: [magiclen/qrcode-segments-optimizer](http
 
 pub extern crate qrcodegen;
 
-#[cfg(feature = "image")]
-extern crate image_dep as image;
-
 mod qr_code_error;
 
 use core::mem::size_of;
@@ -190,7 +187,7 @@ fn to_svg_inner<S: AsRef<str>, W: Write>(
 
     let margin = (size - (point_size * data_length)) / 2;
 
-    let size = format!("{}", size);
+    let size = format!("{size}");
 
     writer.write_all(b"<?xml version=\"1.0\" encoding=\"utf-8\"?>")?;
 
@@ -234,7 +231,7 @@ fn to_svg_inner<S: AsRef<str>, W: Write>(
 
     writer.write_all(b"\" fill=\"#FFFFFF\" cx=\"0\" cy=\"0\" />")?;
 
-    let point_size_string = format!("{}", point_size);
+    let point_size_string = format!("{point_size}");
 
     for i in 0..s {
         for j in 0..s {
@@ -290,7 +287,7 @@ fn to_svg_to_vec_inner<S: AsRef<str>>(
 
     let margin = (size - (point_size * data_length)) / 2;
 
-    let size = format!("{}", size);
+    let size = format!("{size}");
 
     svg.extend_from_slice(b"<?xml version=\"1.0\" encoding=\"utf-8\"?>");
 
@@ -334,7 +331,7 @@ fn to_svg_to_vec_inner<S: AsRef<str>>(
 
     svg.extend_from_slice(b"\" fill=\"#FFFFFF\" cx=\"0\" cy=\"0\" />");
 
-    let point_size_string = format!("{}", point_size);
+    let point_size_string = format!("{point_size}");
 
     for i in 0..s {
         for j in 0..s {
