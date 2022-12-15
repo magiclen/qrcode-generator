@@ -1,6 +1,6 @@
 [package]
 name = "qrcode-generator"
-version = "4.1.6"
+version = "4.1.7"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2021"
 repository = "https://github.com/magiclen/qrcode-generator"
@@ -16,7 +16,11 @@ include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 qrcodegen = "1.8"
 html-escape = "0.2"
 
-image = { version = "0.24", optional = true }
+[dependencies.image]
+version = "0.24"
+optional = true
+default-features = false
+features = ["png"]
 
 [dev-dependencies]
 manifest-dir-macros = "0.1"
