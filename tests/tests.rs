@@ -1,8 +1,7 @@
 #[macro_use]
 extern crate manifest_dir_macros;
 
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
 use qrcode_generator::QrCodeEcc;
 

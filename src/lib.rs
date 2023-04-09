@@ -86,24 +86,20 @@ pub extern crate qrcodegen;
 
 mod qr_code_error;
 
-use core::mem::size_of;
-use core::str::from_utf8;
-
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::Path;
-
-pub use qr_code_error::*;
-
-use qrcodegen::QrCode;
-
-pub use qrcodegen::{QrCodeEcc, QrSegment};
+use core::{mem::size_of, str::from_utf8};
+use std::{
+    fs::{self, File},
+    io::Write,
+    path::Path,
+};
 
 #[cfg(feature = "image")]
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-
 #[cfg(feature = "image")]
 use image::{ColorType, ImageBuffer, ImageEncoder, Luma};
+pub use qr_code_error::*;
+use qrcodegen::QrCode;
+pub use qrcodegen::{QrCodeEcc, QrSegment};
 
 #[inline]
 fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, QRCodeError> {
@@ -116,7 +112,7 @@ fn generate_qrcode<D: AsRef<[u8]>>(data: D, ecc: QrCodeEcc) -> Result<QrCode, QR
             };
 
             Ok(qr)
-        }
+        },
     }
 }
 
@@ -210,7 +206,7 @@ fn to_svg_inner<S: AsRef<str>, W: Write>(
                 html_escape::encode_safe_to_writer(description, &mut writer)?;
                 writer.write_all(b"</desc>")?;
             }
-        }
+        },
         None => {
             writer.write_all(b"<desc>")?;
             writer.write_all(env!("CARGO_PKG_NAME").as_bytes())?;
@@ -218,7 +214,7 @@ fn to_svg_inner<S: AsRef<str>, W: Write>(
             writer.write_all(env!("CARGO_PKG_VERSION").as_bytes())?;
             writer.write_all(b" by magiclen.org")?;
             writer.write_all(b"</desc>")?;
-        }
+        },
     }
 
     writer.write_all(b"<rect width=\"")?;
@@ -310,7 +306,7 @@ fn to_svg_to_vec_inner<S: AsRef<str>>(
                 html_escape::encode_safe_to_writer(description, &mut svg)?;
                 svg.extend_from_slice(b"</desc>");
             }
-        }
+        },
         None => {
             svg.extend_from_slice(b"<desc>");
             svg.extend_from_slice(env!("CARGO_PKG_NAME").as_bytes());
@@ -318,7 +314,7 @@ fn to_svg_to_vec_inner<S: AsRef<str>>(
             svg.extend_from_slice(env!("CARGO_PKG_VERSION").as_bytes());
             svg.extend_from_slice(b" by magiclen.org");
             svg.extend_from_slice(b"</desc>");
-        }
+        },
     }
 
     svg.extend_from_slice(b"<rect width=\"");

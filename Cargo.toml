@@ -3,6 +3,7 @@ name = "qrcode-generator"
 version = "4.1.7"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2021"
+rust-version = "1.61"
 repository = "https://github.com/magiclen/qrcode-generator"
 homepage = "https://magiclen.org/qrcode-generator"
 keywords = ["qrcode", "generate", "png", "svg", "vec"]

@@ -1,6 +1,8 @@
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
-use std::io;
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+    io,
+};
 
 #[cfg(feature = "image")]
 use image::ImageError;
@@ -38,13 +40,13 @@ impl Display for QRCodeError {
         match self {
             QRCodeError::DataTooLong => {
                 f.write_str("the supplied data does not fit any QR Code version")
-            }
+            },
             QRCodeError::IOError(error) => Display::fmt(error, f),
             #[cfg(feature = "image")]
             QRCodeError::ImageError(error) => Display::fmt(error, f),
             QRCodeError::ImageSizeTooSmall => {
                 f.write_str("image size is too small to draw the whole QR code")
-            }
+            },
             QRCodeError::ImageSizeTooLarge => f.write_str("image size is too large to generate"),
         }
     }
