@@ -183,51 +183,30 @@ fn to_svg_inner<S: AsRef<str>, W: Write>(
 
     let margin = (size - (point_size * data_length)) / 2;
 
-    let size = format!("{size}");
-
-    writer.write_all(b"<?xml version=\"1.0\" encoding=\"utf-8\"?>")?;
-
-    writer.write_all(b"<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"")?;
-
-    writer.write_all(size.as_bytes())?;
-
-    writer.write_all(b"\" height=\"")?;
-
-    writer.write_all(size.as_bytes())?;
-
-    writer.write_all(b"\">")?;
+    writer.write_fmt(format_args!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg width=\"{size}\" height=\"{size}\" shape-rendering=\"crispEdges\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\">\n"))?;
 
     match description {
         Some(description) => {
             let description = description.as_ref();
 
             if !description.is_empty() {
-                writer.write_all(b"<desc>")?;
+                writer.write_all(b"\t<desc>")?;
                 html_escape::encode_safe_to_writer(description, &mut writer)?;
-                writer.write_all(b"</desc>")?;
+                writer.write_all(b"</desc>\n")?;
             }
         },
         None => {
-            writer.write_all(b"<desc>")?;
-            writer.write_all(env!("CARGO_PKG_NAME").as_bytes())?;
-            writer.write_all(b" ")?;
-            writer.write_all(env!("CARGO_PKG_VERSION").as_bytes())?;
-            writer.write_all(b" by magiclen.org")?;
-            writer.write_all(b"</desc>")?;
+            writer.write_fmt(format_args!(
+                "\t<desc>{name} {version} by magiclen.org</desc>\n",
+                name = env!("CARGO_PKG_NAME"),
+                version = env!("CARGO_PKG_VERSION")
+            ))?;
         },
     }
 
-    writer.write_all(b"<rect width=\"")?;
-
-    writer.write_all(size.as_bytes())?;
-
-    writer.write_all(b"\" height=\"")?;
-
-    writer.write_all(size.as_bytes())?;
-
-    writer.write_all(b"\" fill=\"#FFFFFF\" cx=\"0\" cy=\"0\" />")?;
-
-    let point_size_string = format!("{point_size}");
+    writer.write_fmt(format_args!(
+        "\t<rect width=\"{size}\" height=\"{size}\" fill=\"#FFF\"/>\n\t<path d=\""
+    ))?;
 
     for i in 0..s {
         for j in 0..s {
@@ -235,24 +214,12 @@ fn to_svg_inner<S: AsRef<str>, W: Write>(
                 let x = j as usize * point_size + margin;
                 let y = i as usize * point_size + margin;
 
-                writer.write_all(b"<rect x=\"")?;
-                writer.write_all(x.to_string().as_bytes())?;
-
-                writer.write_all(b"\" y=\"")?;
-                writer.write_all(y.to_string().as_bytes())?;
-
-                writer.write_all(b"\" width=\"")?;
-                writer.write_all(point_size_string.as_bytes())?;
-
-                writer.write_all(b"\" height=\"")?;
-                writer.write_all(point_size_string.as_bytes())?;
-
-                writer.write_all(b"\" fill=\"#000000\" shape-rendering=\"crispEdges\" />")?;
+                writer.write_fmt(format_args!("M{x} {y}h{point_size}v{point_size}H{x}V{y}"))?;
             }
         }
     }
 
-    writer.write_all(b"</svg>")?;
+    writer.write_all(b"\"/>\n</svg>")?;
 
     writer.flush()?;
 
@@ -283,51 +250,30 @@ fn to_svg_to_vec_inner<S: AsRef<str>>(
 
     let margin = (size - (point_size * data_length)) / 2;
 
-    let size = format!("{size}");
-
-    svg.extend_from_slice(b"<?xml version=\"1.0\" encoding=\"utf-8\"?>");
-
-    svg.extend_from_slice(b"<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"");
-
-    svg.extend_from_slice(size.as_bytes());
-
-    svg.extend_from_slice(b"\" height=\"");
-
-    svg.extend_from_slice(size.as_bytes());
-
-    svg.extend_from_slice(b"\">");
+    svg.write_fmt(format_args!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg width=\"{size}\" height=\"{size}\" shape-rendering=\"crispEdges\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\">\n"))?;
 
     match description {
         Some(description) => {
             let description = description.as_ref();
 
             if !description.is_empty() {
-                svg.extend_from_slice(b"<desc>");
+                svg.extend_from_slice(b"\t<desc>");
                 html_escape::encode_safe_to_writer(description, &mut svg)?;
-                svg.extend_from_slice(b"</desc>");
+                svg.extend_from_slice(b"</desc>\n");
             }
         },
         None => {
-            svg.extend_from_slice(b"<desc>");
-            svg.extend_from_slice(env!("CARGO_PKG_NAME").as_bytes());
-            svg.extend_from_slice(b" ");
-            svg.extend_from_slice(env!("CARGO_PKG_VERSION").as_bytes());
-            svg.extend_from_slice(b" by magiclen.org");
-            svg.extend_from_slice(b"</desc>");
+            svg.write_fmt(format_args!(
+                "\t<desc>{name} {version} by magiclen.org</desc>\n",
+                name = env!("CARGO_PKG_NAME"),
+                version = env!("CARGO_PKG_VERSION")
+            ))?;
         },
     }
 
-    svg.extend_from_slice(b"<rect width=\"");
-
-    svg.extend_from_slice(size.as_bytes());
-
-    svg.extend_from_slice(b"\" height=\"");
-
-    svg.extend_from_slice(size.as_bytes());
-
-    svg.extend_from_slice(b"\" fill=\"#FFFFFF\" cx=\"0\" cy=\"0\" />");
-
-    let point_size_string = format!("{point_size}");
+    svg.write_fmt(format_args!(
+        "\t<rect width=\"{size}\" height=\"{size}\" fill=\"#FFF\"/>\n\t<path d=\""
+    ))?;
 
     for i in 0..s {
         for j in 0..s {
@@ -335,24 +281,12 @@ fn to_svg_to_vec_inner<S: AsRef<str>>(
                 let x = j as usize * point_size + margin;
                 let y = i as usize * point_size + margin;
 
-                svg.extend_from_slice(b"<rect x=\"");
-                svg.extend_from_slice(x.to_string().as_bytes());
-
-                svg.extend_from_slice(b"\" y=\"");
-                svg.extend_from_slice(y.to_string().as_bytes());
-
-                svg.extend_from_slice(b"\" width=\"");
-                svg.extend_from_slice(point_size_string.as_bytes());
-
-                svg.extend_from_slice(b"\" height=\"");
-                svg.extend_from_slice(point_size_string.as_bytes());
-
-                svg.extend_from_slice(b"\" fill=\"#000000\" shape-rendering=\"crispEdges\" />");
+                svg.write_fmt(format_args!("M{x} {y}h{point_size}v{point_size}H{x}V{y}"))?;
             }
         }
     }
 
-    svg.extend_from_slice(b"</svg>");
+    svg.write_all(b"\"/>\n</svg>")?;
 
     Ok(svg)
 }
