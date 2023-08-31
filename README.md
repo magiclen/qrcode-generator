@@ -50,7 +50,7 @@ println!("{:?}", result);
 ```rust
 use qrcode_generator::QrCodeEcc;
 
-qrcode_generator::to_svg_to_file("Hello world!", QrCodeEcc::Low, 1024, None::<&str>, "tests/data/file_output.png").unwrap();
+qrcode_generator::to_svg_to_file("Hello world!", QrCodeEcc::Low, 1024, None::<&str>, "tests/data/file_output.svg").unwrap();
 ```
 
 ## Low-level Usage
