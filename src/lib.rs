@@ -314,7 +314,9 @@ fn to_svg_to_file_inner<S: AsRef<str>, P: AsRef<Path>>(
     let file = File::create(path)?;
 
     to_svg_inner(qr, size, description, file).map_err(|err| {
-        if fs::remove_file(path).is_err() {}
+        if fs::remove_file(path).is_err() {
+            // do nothing
+        }
         err
     })
 }
@@ -395,7 +397,9 @@ fn to_png_to_file_inner<P: AsRef<Path>>(
     let file = File::create(path)?;
 
     to_png_inner(qr, size, file).map_err(|err| {
-        if fs::remove_file(path).is_err() {}
+        if fs::remove_file(path).is_err() {
+            // do nothing
+        }
         err
     })
 }
