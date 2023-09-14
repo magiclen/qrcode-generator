@@ -1,6 +1,7 @@
 QR Code Generator
 ====================
 
+[![Docs](https://docs.rs/qrcode-generator/badge.svg)](https://docs.rs/qrcode-generator)
 [![CI](https://github.com/magiclen/qrcode-generator/actions/workflows/ci.yml/badge.svg)](https://github.com/magiclen/qrcode-generator/actions/workflows/ci.yml)
 
 This crate provides functions to generate QR Code matrices and images in RAW, PNG and SVG formats.
