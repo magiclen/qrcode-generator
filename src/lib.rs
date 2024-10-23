@@ -372,7 +372,7 @@ fn to_png_inner<W: Write>(qr: QrCode, size: usize, writer: W) -> Result<(), QRCo
 
     let encoder = PngEncoder::new_with_quality(writer, CompressionType::Best, FilterType::NoFilter);
 
-    Ok(encoder.write_image(&img_raw, size as u32, size as u32, ColorType::L8)?)
+    Ok(encoder.write_image(&img_raw, size as u32, size as u32, ColorType::L8.into())?)
 }
 
 #[cfg(feature = "image")]

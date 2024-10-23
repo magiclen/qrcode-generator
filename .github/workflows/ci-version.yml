@@ -42,7 +42,7 @@ jobs:
           - macos-latest
           - windows-latest
         toolchain:
-          - 1.62
+          - 1.67
         features:
           -
           - --no-default-features
