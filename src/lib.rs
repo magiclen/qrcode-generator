@@ -82,6 +82,8 @@ println!("{:?}", result);
 More segments optimization apporaches: [magiclen/qrcode-segments-optimizer](https://github.com/magiclen/qrcode-segments-optimizer)
 */
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 pub extern crate qrcodegen;
 
 mod qr_code_error;
