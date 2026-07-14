@@ -42,10 +42,11 @@ jobs:
           - macos-latest
           - windows-latest
         toolchain:
-          - 1.67
+          - 1.89
         features:
           -
           - --no-default-features
+          - --all-features
     name: Test ${{ matrix.toolchain }} on ${{ matrix.os }} (${{ matrix.features }})
     runs-on: ${{ matrix.os }}
     steps:

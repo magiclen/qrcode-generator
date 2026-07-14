@@ -1,27 +1,86 @@
 [package]
 name = "qrcode-generator"
-version = "5.0.0"
+version = "6.0.0"
 authors = ["Magic Len <len@magiclen.org>"]
-edition = "2021"
-rust-version = "1.67"
+edition = "2024"
+rust-version = "1.89"
 repository = "https://github.com/magiclen/qrcode-generator"
 homepage = "https://magiclen.org/qrcode-generator"
-keywords = ["qrcode", "generate", "png", "svg", "vec"]
+keywords = ["qrcode", "micro-qr", "rmqr", "png", "svg"]
 categories = ["encoding", "multimedia::images"]
 description = "Generate QR Code matrices and images in RAW, PNG and SVG formats."
 license = "MIT"
 include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 
 [dependencies]
-qrcodegen = "1.8"
+atomic-write-file = "0.3"
 html-escape = "0.2"
+
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 
+futures-io = { version = "0.3", optional = true, default-features = false, features = ["std"] }
+
+encoding_rs = { version = "0.8.29", optional = true, default-features = false, features = ["alloc", "fast-kanji-encode"] }
+
 [dev-dependencies]
-manifest-dir-macros = "0.1"
+quircs = "0.10"
+rxing = { version = "0.9", default-features = false, features = ["decoders", "encoding_rs", "qrcode"] }
+url = "2"
 
 [features]
-default = ["image"]
+default = ["qr", "image"]
+
+image = ["dep:image"]
+async-write = ["dep:futures-io"]
+kanji = ["dep:encoding_rs"]
+
+qr = []
+micro-qr = []
+rmqr = []
+
+[[example]]
+name = "basic"
+required-features = ["qr", "image"]
+
+[[example]]
+name = "bytes"
+required-features = ["qr"]
+
+[[example]]
+name = "error_correction"
+required-features = ["qr"]
+
+[[example]]
+name = "segments"
+required-features = ["qr"]
+
+[[example]]
+name = "structured_append"
+required-features = ["qr"]
+
+[[example]]
+name = "url"
+required-features = ["qr"]
+
+[[example]]
+name = "micro_qr"
+required-features = ["micro-qr"]
+
+[[example]]
+name = "rmqr"
+required-features = ["rmqr"]
+
+[[example]]
+name = "auto"
+required-features = ["qr", "micro-qr"]
+
+[[example]]
+name = "kanji"
+required-features = ["qr", "kanji"]
+
+[[example]]
+name = "async_write"
+required-features = ["qr", "async-write"]
 
 [package.metadata.docs.rs]
 all-features = true
