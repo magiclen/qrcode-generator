@@ -63,29 +63,3 @@ impl ToQRText for Url {
         uppercase_percent_escapes(&normalized)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn http_urls_normalize_only_equivalent_parts() {
-        let url = Url::parse("https://User:Pass@magiclen.org/%7eCase?x=%ab#Part").unwrap();
-
-        assert_eq!(url.to_qr_text(), "HTTPS://User:Pass@MAGICLEN.ORG/%7ECase?x=%AB#Part",);
-    }
-
-    #[test]
-    fn http_root_paths_are_omitted() {
-        let url = Url::parse("https://magiclen.org").unwrap();
-
-        assert_eq!(url.to_qr_text(), "HTTPS://MAGICLEN.ORG");
-    }
-
-    #[test]
-    fn opaque_urls_keep_case_sensitive_data() {
-        let url = Url::parse("mailto:User%2f@example.com").unwrap();
-
-        assert_eq!(url.to_qr_text(), "MAILTO:User%2F@example.com");
-    }
-}

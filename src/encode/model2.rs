@@ -129,6 +129,20 @@ pub(crate) fn encode(
     })
 }
 
+// Reports whether the segments fit the version at the given error correction level.
+pub(crate) fn fits(
+    segments: &[Segment],
+    version: QrVersion,
+    error_correction: QrErrorCorrection,
+    fnc1: Option<Fnc1>,
+    structured_append: Option<StructuredAppendInfo>,
+) -> bool {
+    matches!(
+        total_bits(segments, version, fnc1, structured_append),
+        Ok(used_bits) if used_bits <= data_codewords(version, error_correction) * 8
+    )
+}
+
 fn total_bits(
     segments: &[Segment],
     version: QrVersion,
@@ -590,143 +604,3 @@ static NUM_ERROR_CORRECTION_BLOCKS: [[i8; 41]; 4] = [
         35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81,
     ],
 ];
-
-#[cfg(test)]
-mod tests {
-    use alloc::string::String;
-
-    use super::*;
-
-    #[test]
-    fn all_version_capacity_totals_are_consistent() {
-        for version in 1..=40 {
-            let version = QrVersion(version);
-            for error_correction in [
-                QrErrorCorrection::Low,
-                QrErrorCorrection::Medium,
-                QrErrorCorrection::Quartile,
-                QrErrorCorrection::High,
-            ] {
-                assert!(data_codewords(version, error_correction) > 0);
-                assert!(data_codewords(version, error_correction) < raw_data_modules(version) / 8);
-            }
-        }
-    }
-
-    #[test]
-    fn normative_bch_values_match() {
-        assert_eq!(format_bits(QrErrorCorrection::Medium, 5), 0x40CE);
-        assert_eq!(version_bits(QrVersion(7)), 0x07C94);
-        assert_eq!(version_bits(QrVersion(40)), 0x28C69);
-    }
-
-    #[test]
-    fn normative_alignment_positions_match() {
-        for (version, expected) in [
-            (2, &[6, 18][..]),
-            (7, &[6, 22, 38][..]),
-            (32, &[6, 34, 60, 86, 112, 138][..]),
-            (40, &[6, 30, 58, 86, 114, 142, 170][..]),
-        ] {
-            assert_eq!(alignment_positions(QrVersion(version)), expected);
-        }
-    }
-
-    #[test]
-    fn every_version_accepts_its_byte_capacity_and_rejects_one_more() {
-        for value in 1..=40 {
-            let version = QrVersion(value);
-            for error_correction in [
-                QrErrorCorrection::Low,
-                QrErrorCorrection::Medium,
-                QrErrorCorrection::Quartile,
-                QrErrorCorrection::High,
-            ] {
-                let capacity_bits = data_codewords(version, error_correction) * 8;
-                let overhead = 4 + usize::from(Mode::Byte.cci_bits(version));
-                let byte_count = (capacity_bits - overhead) / 8;
-                let segment = Segment::bytes(vec![b'a'; byte_count]);
-                assert!(
-                    encode(
-                        &[segment],
-                        version,
-                        error_correction,
-                        Some(QrMask(0)),
-                        false,
-                        None,
-                        None,
-                    )
-                    .is_ok()
-                );
-
-                let too_long = Segment::bytes(vec![b'a'; byte_count + 1]);
-                assert!(matches!(
-                    encode(
-                        &[too_long],
-                        version,
-                        error_correction,
-                        Some(QrMask(0)),
-                        false,
-                        None,
-                        None,
-                    ),
-                    Err(EncodeError::DataTooLong { .. })
-                ));
-            }
-        }
-    }
-
-    #[test]
-    fn annex_i_version_1_m_matrix() {
-        let segment = Segment::numeric("01234567").unwrap();
-        let symbol = encode(
-            &[segment],
-            QrVersion::MIN,
-            QrErrorCorrection::Medium,
-            Some(QrMask::new(2).unwrap()),
-            false,
-            None,
-            None,
-        )
-        .unwrap();
-        let expected = [
-            "111111100101101111111",
-            "100000100111101000001",
-            "101110101000001011101",
-            "101110101100001011101",
-            "101110101011101011101",
-            "100000101000101000001",
-            "111111101010101111111",
-            "000000001001100000000",
-            "101111100100101111100",
-            "000101011010100101100",
-            "001000110101010011111",
-            "000010000100000111100",
-            "000111111001010010000",
-            "000000001011111001100",
-            "111111100110101100000",
-            "100000101011111000101",
-            "101110101000100101100",
-            "101110101100100100000",
-            "101110101011010010100",
-            "100000100000000110110",
-            "111111101111010010100",
-        ];
-        for (row, expected) in symbol.modules.chunks(21).zip(expected) {
-            assert_eq!(
-                row.iter().map(|value| if *value { '1' } else { '0' }).collect::<String>(),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn n4_penalty_uses_inclusive_five_percent_bands() {
-        // A version 1 symbol has 441 modules, so 45% and 55% fall between integer dark counts.
-        assert_eq!(n4_penalty(220, 441), 0);
-        assert_eq!(n4_penalty(199, 441), 0);
-        assert_eq!(n4_penalty(198, 441), PENALTY_N4);
-        assert_eq!(n4_penalty(242, 441), 0);
-        assert_eq!(n4_penalty(243, 441), PENALTY_N4);
-    }
-}

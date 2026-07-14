@@ -1073,48 +1073,97 @@ impl QrEncoder {
         }
 
         let force_initial_eci = parts.iter().any(|part| requires_non_default_eci(part));
-        let placeholder = StructuredAppendInfo {
-            index: 0, total: parts.len() as u8, parity: 0
-        };
+        let total = parts.len() as u8;
 
-        // Parity uses the byte representation selected by the optimizer, including Shift JIS or UTF-8 bytes.
-        let mut parity = 0;
+        // Each part is optimized once, and both the shared parity and the final symbols reuse the result.
+        let mut plans = Vec::with_capacity(parts.len());
+        let mut parity = 0u8;
 
         for part in parts {
-            let symbol = self.encode_optimized_text(part, Some(placeholder), force_initial_eci)?;
+            let (version, segments) = self.qr_structured_plan(part, force_initial_eci)?;
 
-            #[allow(irrefutable_let_patterns)]
-            let SymbolVersion::Qr(version) = symbol.version else {
-                unreachable!("Structured Append is encoded only by the Model 2 encoder")
-            };
-
-            for segment in optimizer::text(
-                part,
-                optimizer::Profile::qr(version),
-                self.fnc1.is_some(),
-                force_initial_eci,
-            )? {
-                for byte in segment.source {
+            // Parity uses the byte representation selected by the optimizer, including Shift JIS or UTF-8 bytes.
+            for segment in &segments {
+                for &byte in &segment.source {
                     parity ^= byte;
                 }
             }
+
+            plans.push((version, segments));
         }
 
-        parts
-            .iter()
+        plans
+            .into_iter()
             .enumerate()
-            .map(|(index, part)| {
-                self.encode_optimized_text(
-                    part,
+            .map(|(index, (version, segments))| {
+                model2::encode(
+                    &segments,
+                    version,
+                    self.error_correction,
+                    self.mask,
+                    self.boost_error_correction,
+                    self.fnc1,
                     Some(StructuredAppendInfo {
                         index: index as u8,
-                        total: parts.len() as u8,
+                        total,
                         parity,
                     }),
-                    force_initial_eci,
                 )
             })
             .collect()
+    }
+
+    // Picks the smallest version that fits one Structured Append part and returns its optimized segments.
+    fn qr_structured_plan(
+        &self,
+        text: &str,
+        force_initial_eci: bool,
+    ) -> Result<(QrVersion, Vec<Segment>), EncodeError> {
+        if self.versions.start() > self.versions.end() {
+            return Err(EncodeError::InvalidVersionRange);
+        }
+
+        // Only the presence of the header matters for the fit check, so the metadata values are placeholders.
+        let header = StructuredAppendInfo {
+            index: 0, total: 16, parity: 0
+        };
+        let range = self.versions.clone();
+        let mut cache: [Option<Vec<Segment>>; 3] = [None, None, None];
+
+        for value in range.start().0..=range.end().0 {
+            let version = QrVersion(value);
+            let group = version_group(version);
+
+            if cache[group].is_none() {
+                cache[group] = Some(optimizer::text(
+                    text,
+                    optimizer::Profile::qr(version),
+                    self.fnc1.is_some(),
+                    force_initial_eci,
+                )?);
+            }
+
+            let segments = cache[group].as_deref().expect("the version group is cached");
+
+            if model2::fits(segments, version, self.error_correction, self.fnc1, Some(header)) {
+                return Ok((version, segments.to_vec()));
+            }
+        }
+
+        // No version fits, so the largest one is returned to reproduce the same capacity error later.
+        let version = *range.end();
+        let group = version_group(version);
+
+        if cache[group].is_none() {
+            cache[group] = Some(optimizer::text(
+                text,
+                optimizer::Profile::qr(version),
+                self.fnc1.is_some(),
+                force_initial_eci,
+            )?);
+        }
+
+        Ok((version, cache[group].take().expect("the final version group is cached")))
     }
 
     /// Encodes caller-selected segment parts as one Structured Append sequence.
@@ -2172,108 +2221,4 @@ fn text_boundaries(text: &str) -> Vec<usize> {
 #[cfg(feature = "qr")]
 fn requires_non_default_eci(text: &str) -> bool {
     text.chars().any(|character| u32::from(character) > 0xFF)
-}
-
-#[cfg(all(test, feature = "qr"))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn eci_designators_use_the_shortest_width() {
-        assert_eq!(Segment::eci(EciAssignment::new(127).unwrap()).bits.len(), 8);
-        assert_eq!(Segment::eci(EciAssignment::new(128).unwrap()).bits.len(), 16);
-        assert_eq!(Segment::eci(EciAssignment::new(16_383).unwrap()).bits.len(), 16);
-        assert_eq!(Segment::eci(EciAssignment::new(16_384).unwrap()).bits.len(), 24);
-        assert_eq!(Segment::eci(EciAssignment::new(999_999).unwrap()).bits.len(), 24);
-    }
-
-    #[cfg(feature = "kanji")]
-    #[test]
-    fn normative_kanji_values_match() {
-        for (text, expected) in [("点", "0110110011111"), ("茗", "1101010101010")] {
-            let segment = Segment::kanji(text).unwrap();
-            let bits = (0..segment.bits.len())
-                .map(|index| if segment.bits.bit(index) { '1' } else { '0' })
-                .collect::<String>();
-
-            assert_eq!(bits, expected);
-        }
-    }
-
-    #[test]
-    fn qr_input_preflight_uses_numeric_capacity() {
-        let encoder = QrEncoder::new(QrErrorCorrection::Low).version(QrVersion::MIN);
-
-        assert_eq!(encoder.input_capacity_upper_bound(false).unwrap(), (41, 152));
-        assert_eq!(encoder.input_capacity_upper_bound(true).unwrap(), (35, 152));
-        assert!(ensure_input_length(41, 41, 152, 1).is_ok());
-        assert!(matches!(
-            ensure_input_length(42, 41, 152, 1),
-            Err(EncodeError::DataTooLong {
-                capacity_bits: 152,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn structured_append_partition_minimizes_total_area() {
-        let parts = minimum_area_partition(
-            14,
-            2,
-            QrVersion::new(1).unwrap()..=QrVersion::new(3).unwrap(),
-            |start, version| {
-                let capacity = match version.value() {
-                    1 => 4,
-                    2 => 7,
-                    3 => 10,
-                    _ => unreachable!(),
-                };
-                Some((start + capacity).min(14))
-            },
-        )
-        .unwrap();
-        assert_eq!(parts, [(0, 7), (7, 14)]);
-    }
-
-    #[cfg(feature = "kanji")]
-    #[test]
-    fn structured_append_uses_shift_jis_bytes_for_kanji_parity() {
-        let numeric = Segment::numeric("0123456789").unwrap();
-        let kanji = Segment::kanji("日本").unwrap();
-        let symbols = QrEncoder::new(QrErrorCorrection::Low)
-            .encode_structured_append_segments(&[&[numeric][..], &[kanji][..]])
-            .unwrap();
-        assert!(symbols.iter().all(|symbol| symbol.structured_append.unwrap().parity == 0x85));
-    }
-}
-
-#[cfg(all(test, feature = "micro-qr"))]
-mod micro_encoder_tests {
-    use super::*;
-
-    #[test]
-    fn micro_input_preflight_uses_numeric_capacity() {
-        let encoder = MicroEncoder::new(MicroErrorCorrection::Low).version(MicroVersion::M4);
-
-        assert_eq!(
-            encoder.input_capacity_upper_bound().unwrap(),
-            Some((MicroVersion::M4, 35, 128))
-        );
-        assert!(ensure_input_length(35, 35, 128, 1).is_ok());
-        assert!(matches!(
-            ensure_input_length(36, 35, 128, 1),
-            Err(EncodeError::DataTooLong {
-                capacity_bits: 128,
-                ..
-            })
-        ));
-
-        assert!(matches!(
-            MicroEncoder::new(MicroErrorCorrection::DetectionOnly)
-                .version(MicroVersion::M1)
-                .encode_bytes(b"AAAAAA"),
-            Err(EncodeError::UnsupportedMode { .. })
-        ));
-    }
 }

@@ -46,11 +46,18 @@ impl fmt::Display for EncodeError {
             Self::DataTooLong {
                 required_bits,
                 capacity_bits,
-            } => write!(
-                f,
-                "the encoded data needs {required_bits} bits but the selected symbols hold \
-                 {capacity_bits} bits"
-            ),
+            } => {
+                // A sentinel bit count means the exact size was not measured, so it is left out.
+                if *required_bits == usize::MAX {
+                    f.write_str("the encoded data exceeds the capacity of the selected symbols")
+                } else {
+                    write!(
+                        f,
+                        "the encoded data needs {required_bits} bits but the selected symbols \
+                         hold {capacity_bits} bits"
+                    )
+                }
+            },
             Self::InvalidData {
                 mode,
                 byte_offset,
