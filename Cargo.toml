@@ -13,26 +13,29 @@ license = "MIT"
 include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 
 [dependencies]
-atomic-write-file = "0.3"
-html-escape = "0.2"
+atomic-write-file = { version = "0.3", optional = true }
+html-escape = { version = "0.2", default-features = false }
 
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 
 futures-io = { version = "0.3", optional = true, default-features = false, features = ["std"] }
 
 encoding_rs = { version = "0.8.29", optional = true, default-features = false, features = ["alloc", "fast-kanji-encode"] }
+url = { version = "2", optional = true, default-features = false }
 
 [dev-dependencies]
 quircs = "0.10"
 rxing = { version = "0.9", default-features = false, features = ["decoders", "encoding_rs", "qrcode"] }
-url = "2"
 
 [features]
-default = ["qr", "image"]
+default = ["std", "qr", "image"]
 
-image = ["dep:image"]
-async-write = ["dep:futures-io"]
+std = ["dep:atomic-write-file", "html-escape/std", "url?/std"]
+
+image = ["std", "dep:image"]
+async-write = ["std", "dep:futures-io"]
 kanji = ["dep:encoding_rs"]
+url = ["dep:url"]
 
 qr = []
 micro-qr = []
@@ -40,47 +43,47 @@ rmqr = []
 
 [[example]]
 name = "basic"
-required-features = ["qr", "image"]
+required-features = ["std", "qr", "image"]
 
 [[example]]
 name = "bytes"
-required-features = ["qr"]
+required-features = ["std", "qr"]
 
 [[example]]
 name = "error_correction"
-required-features = ["qr"]
+required-features = ["std", "qr"]
 
 [[example]]
 name = "segments"
-required-features = ["qr"]
+required-features = ["std", "qr"]
 
 [[example]]
 name = "structured_append"
-required-features = ["qr"]
+required-features = ["std", "qr"]
 
 [[example]]
 name = "url"
-required-features = ["qr"]
+required-features = ["std", "qr", "url"]
 
 [[example]]
 name = "micro_qr"
-required-features = ["micro-qr"]
+required-features = ["std", "micro-qr"]
 
 [[example]]
 name = "rmqr"
-required-features = ["rmqr"]
+required-features = ["std", "rmqr"]
 
 [[example]]
 name = "auto"
-required-features = ["qr", "micro-qr"]
+required-features = ["std", "qr", "micro-qr"]
 
 [[example]]
 name = "kanji"
-required-features = ["qr", "kanji"]
+required-features = ["std", "qr"]
 
 [[example]]
 name = "async_write"
-required-features = ["qr", "async-write"]
+required-features = ["std", "qr", "async-write"]
 
 [package.metadata.docs.rs]
 all-features = true

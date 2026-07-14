@@ -1,3 +1,5 @@
+use alloc::{vec, vec::Vec};
+
 use super::{
     Fnc1, Mode, QrErrorCorrection, QrMask, QrVersion, Segment, StructuredAppendInfo, Symbol,
     SymbolVersion, bits::BitBuffer, reed_solomon,
@@ -591,6 +593,8 @@ static NUM_ERROR_CORRECTION_BLOCKS: [[i8; 41]; 4] = [
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::String;
+
     use super::*;
 
     #[test]
@@ -641,7 +645,7 @@ mod tests {
                 let capacity_bits = data_codewords(version, error_correction) * 8;
                 let overhead = 4 + usize::from(Mode::Byte.cci_bits(version));
                 let byte_count = (capacity_bits - overhead) / 8;
-                let segment = Segment::bytes(&vec![b'a'; byte_count]);
+                let segment = Segment::bytes(vec![b'a'; byte_count]);
                 assert!(
                     encode(
                         &[segment],
@@ -655,7 +659,7 @@ mod tests {
                     .is_ok()
                 );
 
-                let too_long = Segment::bytes(&vec![b'a'; byte_count + 1]);
+                let too_long = Segment::bytes(vec![b'a'; byte_count + 1]);
                 assert!(matches!(
                     encode(
                         &[too_long],

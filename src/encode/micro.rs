@@ -1,3 +1,5 @@
+use alloc::{vec, vec::Vec};
+
 #[cfg(feature = "kanji")]
 use super::kanji_encoding;
 use super::{
@@ -90,10 +92,10 @@ pub(crate) fn optimize(data: &[u8], version: MicroVersion) -> Result<Vec<Segment
         .into_iter()
         .map(|(start, end, mode)| match mode {
             Mode::Numeric => Segment::numeric(
-                std::str::from_utf8(&data[start..end]).expect("numeric data is UTF-8"),
+                core::str::from_utf8(&data[start..end]).expect("numeric data is UTF-8"),
             ),
             Mode::Alphanumeric => Segment::alphanumeric(
-                std::str::from_utf8(&data[start..end]).expect("alphanumeric data is UTF-8"),
+                core::str::from_utf8(&data[start..end]).expect("alphanumeric data is UTF-8"),
             ),
             Mode::Byte => Ok(Segment::bytes(&data[start..end])),
             Mode::Kanji | Mode::Eci => unreachable!(),
@@ -214,7 +216,7 @@ pub(crate) fn optimize_text(
                 Mode::Numeric => Segment::numeric(slice),
                 Mode::Alphanumeric => Segment::alphanumeric(slice),
                 Mode::Byte => Ok(Segment::bytes(
-                    &slice.chars().map(|character| character as u8).collect::<Vec<_>>(),
+                    slice.chars().map(|character| character as u8).collect::<Vec<_>>(),
                 )),
                 #[cfg(feature = "kanji")]
                 Mode::Kanji => Segment::kanji(slice),
@@ -656,6 +658,8 @@ const fn symbol_number(version: MicroVersion, error_correction: MicroErrorCorrec
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::String;
+
     use super::*;
 
     #[test]
@@ -683,12 +687,12 @@ mod tests {
             (MicroVersion::M4, MicroErrorCorrection::Medium, 30),
             (MicroVersion::M4, MicroErrorCorrection::Quartile, 21),
         ] {
-            let segment = Segment::numeric(&"1".repeat(character_count)).unwrap();
+            let segment = Segment::numeric("1".repeat(character_count)).unwrap();
             assert!(
                 encode(&[segment], version, error_correction, Some(MicroMask(0)), false,).is_ok()
             );
 
-            let too_long = Segment::numeric(&"1".repeat(character_count + 1)).unwrap();
+            let too_long = Segment::numeric("1".repeat(character_count + 1)).unwrap();
             assert!(matches!(
                 encode(&[too_long], version, error_correction, Some(MicroMask(0)), false,),
                 Err(EncodeError::DataTooLong { .. })

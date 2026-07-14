@@ -27,14 +27,14 @@ println!("{} modules per side", symbol.size());
 Or render straight to image files:
 
 ```rust,no_run
-# #[cfg(all(feature = "qr", feature = "image"))] {
+# #[cfg(all(feature = "std", feature = "qr", feature = "image"))] {
 use qrcode_generator::{Renderer, qr::{Encoder, ErrorCorrection}};
 
 let symbol = Encoder::new(ErrorCorrection::Medium)
     .encode_text("Hello, world!")
     .unwrap();
 
-Renderer::new(&symbol, 512).save_svg("hello.svg", None).unwrap();
+Renderer::new(&symbol, 512).save_svg("hello.svg", None::<&str>).unwrap();
 Renderer::new(&symbol, 512).save_png("hello.png").unwrap();
 # }
 ```
@@ -144,11 +144,22 @@ let symbol = Encoder::new(ErrorCorrection::Medium)
 # }
 ```
 
-The value must keep its meaning. The repository's `url` example normalizes case-insensitive URL parts this way.
+The value must keep its meaning. With the optional `url` feature, `url::Url` implements `ToQRText` by normalizing case-insensitive URL parts and percent escapes:
+
+```rust
+# #[cfg(all(feature = "qr", feature = "url"))] {
+use qrcode_generator::qr::{Encoder, ErrorCorrection};
+use url::Url;
+
+let url = Url::parse("https://magiclen.org").unwrap();
+let symbol = Encoder::new(ErrorCorrection::Medium).encode_to_qr_text(&url).unwrap();
+# let _ = symbol;
+# }
+```
 
 ## Rendering
 
-A `Renderer` draws a `Symbol` at exact pixel dimensions. `Renderer::new` keeps the square interface, while `Renderer::new_with_dimensions` accepts a separate width and height for rectangular symbols. SVG output needs no extra feature:
+A `Renderer` draws a `Symbol` at exact pixel dimensions. `Renderer::new` keeps the square interface, while `Renderer::new_with_dimensions` accepts a separate width and height for rectangular symbols. In-memory grayscale and SVG output work with `no_std + alloc` and need no extra feature:
 
 ```rust
 # #[cfg(feature = "qr")] {
@@ -156,7 +167,7 @@ use qrcode_generator::{Renderer, qr::{Encoder, ErrorCorrection}};
 
 let symbol = Encoder::new(ErrorCorrection::Low).encode_text("Hello").unwrap();
 
-let svg: String = Renderer::new(&symbol, 512).to_svg_string(None).unwrap();
+let svg: String = Renderer::new(&symbol, 512).to_svg_string(None::<&str>).unwrap();
 let pixels: Vec<u8> = Renderer::new(&symbol, 512).to_luma8().unwrap();
 # let _ = (svg, pixels);
 # }
@@ -165,7 +176,7 @@ let pixels: Vec<u8> = Renderer::new(&symbol, 512).to_luma8().unwrap();
 PNG and `ImageBuffer` output need the default `image` feature:
 
 ```rust,no_run
-# #[cfg(all(feature = "qr", feature = "image"))] {
+# #[cfg(all(feature = "std", feature = "qr", feature = "image"))] {
 use qrcode_generator::{Renderer, qr::{Encoder, ErrorCorrection}};
 
 let symbol = Encoder::new(ErrorCorrection::Low).encode_text("Hello").unwrap();
@@ -177,7 +188,7 @@ Renderer::new(&symbol, 512).save_png("hello.png").unwrap();
 # }
 ```
 
-File output through `save_svg` and `save_png` is written atomically, so an existing file is left untouched if rendering fails. The requested size is exact: modules are scaled by the largest whole number that fits, and any pixels left over widen the quiet zone evenly. Use `quiet_zone` to change the margin, down to zero if you want.
+The default `std` feature adds synchronous writer and file output. File output through `save_svg` and `save_png` is written atomically, so an existing file is left untouched if rendering fails. The requested size is exact: modules are scaled by the largest whole number that fits, and any pixels left over widen the quiet zone evenly. Use `quiet_zone` to change the margin, down to zero if you want.
 
 ## Async writing
 
@@ -194,7 +205,7 @@ use qrcode_generator::{
 async fn write<W: AsyncWrite + Unpin>(writer: W) -> Result<(), RenderError> {
     let symbol = Encoder::new(ErrorCorrection::Low).encode_text("Hello").unwrap();
 
-    Renderer::new(&symbol, 512).write_svg_async(writer, None).await
+    Renderer::new(&symbol, 512).write_svg_async(writer, None::<&str>).await
 }
 # }
 ```
@@ -226,13 +237,13 @@ The optional `rmqr` feature adds all 32 ISO/IEC 23941 rMQR versions. The encoder
 use qrcode_generator::{Renderer, rmqr::{Encoder, ErrorCorrection}};
 
 let symbol = Encoder::new(ErrorCorrection::Medium)
-    .encode_text("https://example.com")
+    .encode_text("https://magiclen.org")
     .unwrap();
 
 let width = (symbol.width() + 4) * 8;
 let height = (symbol.height() + 4) * 8;
 let svg = Renderer::new_with_dimensions(&symbol, width, height)
-    .to_svg_string(None)
+    .to_svg_string(None::<&str>)
     .unwrap();
 # }
 ```
@@ -285,37 +296,43 @@ The optional `kanji` feature adds Kanji mode to automatic text segmentation and 
 
 ## Cargo features
 
+- `std` (default) enables synchronous writer and file output.
 - `qr` (default) enables the Model 2 QR Code encoder.
-- `image` (default) enables PNG and `ImageBuffer` output.
+- `image` (default, requires `std`) enables PNG and `ImageBuffer` output.
 - `micro-qr` enables the Micro QR Code encoder with all four versions.
 - `rmqr` enables the Rectangular Micro QR Code encoder with all 32 versions.
 - `kanji` enables Shift JIS Kanji segments and automatic Kanji mode selection.
-- `async-write` enables the runtime-independent asynchronous writer methods.
+- `url` implements `ToQRText` for `url::Url` and works with `no_std + alloc`.
+- `async-write` (requires `std`) enables the runtime-independent asynchronous writer methods.
 */
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+
+extern crate alloc;
+#[cfg(test)]
+extern crate std;
 
 mod encode;
 mod error;
 #[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
 mod render;
+#[cfg(feature = "url")]
+mod url;
 
 #[cfg(all(feature = "qr", feature = "micro-qr"))]
-#[cfg_attr(docsrs, doc(cfg(all(feature = "qr", feature = "micro-qr"))))]
 pub use encode::AutoEncoder;
 pub use encode::{Segment, ToQRText};
 #[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
 pub use encode::{Symbol, SymbolErrorCorrection, SymbolVersion};
 pub use error::{EncodeError, RenderError};
 #[cfg(feature = "async-write")]
-#[cfg_attr(docsrs, doc(cfg(feature = "async-write")))]
 pub use futures_io::AsyncWrite;
 #[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
 pub use render::Renderer;
 
 /// Model 2 QR Code encoding types.
 #[cfg(feature = "qr")]
-#[cfg_attr(docsrs, doc(cfg(feature = "qr")))]
 pub mod qr {
     pub use crate::encode::{
         ApplicationIndicator, EciAssignment, Fnc1, QrEncoder as Encoder,
@@ -326,7 +343,6 @@ pub mod qr {
 
 /// Micro QR Code encoding types.
 #[cfg(feature = "micro-qr")]
-#[cfg_attr(docsrs, doc(cfg(feature = "micro-qr")))]
 pub mod micro {
     pub use crate::encode::{
         MicroEncoder as Encoder, MicroErrorCorrection as ErrorCorrection, MicroMask as Mask,
@@ -336,7 +352,6 @@ pub mod micro {
 
 /// Rectangular Micro QR Code encoding types.
 #[cfg(feature = "rmqr")]
-#[cfg_attr(docsrs, doc(cfg(feature = "rmqr")))]
 pub mod rmqr {
     pub use crate::encode::{
         ApplicationIndicator, EciAssignment, Fnc1, RmqrEncoder as Encoder,

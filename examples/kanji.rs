@@ -3,6 +3,7 @@
 //! Kanji mode packs eligible Shift JIS characters more tightly than byte mode, and is behind the `kanji` feature.
 //!
 //! Run with: `cargo run --example kanji --features kanji`
+//! Or Run with: `cargo run --example kanji`
 
 use qrcode_generator::{
     Renderer,
@@ -11,9 +12,11 @@ use qrcode_generator::{
 
 fn main() {
     // The text encoder selects Kanji mode automatically when the `kanji` feature is on.
-    let symbol = Encoder::new(ErrorCorrection::Medium).encode_text("日本語").unwrap();
+    let symbol = Encoder::new(ErrorCorrection::Medium).encode_text("日本語　あいうえお").unwrap();
 
-    Renderer::new(&symbol, 400).save_svg("kanji.svg", None).unwrap();
+    let file_name = if cfg!(feature = "kanji") { "kanji_output.svg" } else { "utf8_output.svg" };
 
-    println!("wrote kanji.svg ({} modules per side)", symbol.size());
+    Renderer::new(&symbol, 400).save_svg(file_name, None::<&str>).unwrap();
+
+    println!("wrote {file_name} ({} modules per side)", symbol.size());
 }

@@ -1,3 +1,5 @@
+use alloc::{vec, vec::Vec};
+
 #[cfg(feature = "qr")]
 use super::QrVersion;
 #[cfg(feature = "kanji")]
@@ -435,11 +437,11 @@ fn reconstruct_bytes(
         .into_iter()
         .map(|(start, end, mode)| match mode {
             Mode::Numeric => Segment::numeric(
-                std::str::from_utf8(&data[start..end]).expect("numeric data is UTF-8"),
+                core::str::from_utf8(&data[start..end]).expect("numeric data is UTF-8"),
             ),
             Mode::Alphanumeric if fnc1 => Segment::fnc1_alphanumeric(&data[start..end]),
             Mode::Alphanumeric => Segment::alphanumeric(
-                std::str::from_utf8(&data[start..end]).expect("alphanumeric data is UTF-8"),
+                core::str::from_utf8(&data[start..end]).expect("alphanumeric data is UTF-8"),
             ),
             Mode::Byte => Ok(Segment::bytes(&data[start..end])),
             Mode::Kanji | Mode::Eci => unreachable!(),

@@ -23,13 +23,10 @@ fn main() {
             _ => unreachable!("AutoEncoder returns only Model 2 or Micro QR Code symbols"),
         };
 
-        println!("{family}: {} modules per side for {text:?}", symbol.size());
+        let file_name = format!("auto_{}_output.svg", family.replace(' ', "_").to_lowercase());
+
+        Renderer::new(&symbol, 300).save_svg(&file_name, None::<&str>).unwrap();
+
+        println!("wrote {file_name} ({family:?}: {size} modules per side)", size = symbol.size());
     }
-
-    // Rendering is identical whichever family was chosen.
-    let symbol = encoder.encode_text("HELLO 123").unwrap();
-
-    Renderer::new(&symbol, 300).save_svg("auto.svg", None).unwrap();
-
-    println!("wrote auto.svg");
 }

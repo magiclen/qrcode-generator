@@ -11,7 +11,7 @@ fn main() {
     let symbol =
         Encoder::new(ErrorCorrection::Low).version(Version::M2).encode_text("12345").unwrap();
 
-    Renderer::new(&symbol, 300).save_svg("micro.svg", None).unwrap();
+    Renderer::new(&symbol, 300).save_svg("micro_qr_output.svg", None::<&str>).unwrap();
 
-    println!("wrote micro.svg ({} modules per side)", symbol.size());
+    println!("wrote micro_qr_output.svg ({} modules per side)", symbol.size());
 }

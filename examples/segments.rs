@@ -15,7 +15,7 @@ fn main() {
 
     let symbol = Encoder::new(ErrorCorrection::Low).encode_segments(&segments).unwrap();
 
-    Renderer::new(&symbol, 512).save_svg("segments.svg", None).unwrap();
+    Renderer::new(&symbol, 512).save_svg("segments_output.svg", None::<&str>).unwrap();
 
-    println!("wrote segments.svg ({} modules per side)", symbol.size());
+    println!("wrote segments_output.svg ({} modules per side)", symbol.size());
 }

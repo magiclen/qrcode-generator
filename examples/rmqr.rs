@@ -8,11 +8,15 @@ use qrcode_generator::{
 };
 
 fn main() {
-    let symbol = Encoder::new(ErrorCorrection::Medium).encode_text("https://example.com").unwrap();
+    let symbol = Encoder::new(ErrorCorrection::Medium).encode_text("https://magiclen.org").unwrap();
+
+    // Add the two-module quiet zone on each side and render every module as an 8 by 8 pixel square.
     let width = (symbol.width() + 4) * 8;
     let height = (symbol.height() + 4) * 8;
 
-    Renderer::new_with_dimensions(&symbol, width, height).save_svg("rmqr.svg", None).unwrap();
+    Renderer::new_with_dimensions(&symbol, width, height)
+        .save_svg("rmqr_output.svg", None::<&str>)
+        .unwrap();
 
-    println!("wrote rmqr.svg ({} by {} modules)", symbol.width(), symbol.height());
+    println!("wrote rmqr_output.svg ({} x {} modules)", symbol.width(), symbol.height());
 }

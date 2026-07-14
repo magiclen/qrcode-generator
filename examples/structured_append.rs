@@ -20,11 +20,11 @@ fn main() {
         .unwrap();
 
     for (index, symbol) in symbols.iter().enumerate() {
-        let path = format!("sa-{index}.svg");
+        let path = format!("structured_append_{index}_output.svg");
 
-        Renderer::new(symbol, 400).save_svg(&path, None).unwrap();
+        Renderer::new(symbol, 400).save_svg(&path, None::<&str>).unwrap();
 
-        println!("wrote {path}");
+        println!("wrote {path} ({} modules per side)", symbol.size());
     }
 
     println!("{} symbols in the sequence", symbols.len());

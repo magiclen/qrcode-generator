@@ -1,11 +1,14 @@
+use alloc::{string::String, vec, vec::Vec};
+use core::fmt;
 #[cfg(feature = "async-write")]
+use std::{future::poll_fn, io::ErrorKind, pin::Pin};
+#[cfg(feature = "std")]
 use std::{
-    future::poll_fn,
-    io::{self, ErrorKind},
-    pin::Pin,
+    io::{self, Write as IoWrite},
+    path::Path,
 };
-use std::{io::Write, path::Path};
 
+#[cfg(feature = "std")]
 use atomic_write_file::AtomicWriteFile;
 #[cfg(feature = "image")]
 use image::{
@@ -89,13 +92,51 @@ impl<'a> Renderer<'a> {
     /// Writes an SVG document to a writer.
     ///
     /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
-    pub fn write_svg<W: Write>(
+    /// Pass `None::<&str>` when no description is needed.
+    #[cfg(feature = "std")]
+    pub fn write_svg<W: IoWrite>(
         self,
-        mut writer: W,
-        description: Option<&str>,
+        writer: W,
+        description: Option<impl AsRef<str>>,
     ) -> Result<(), RenderError> {
+        let description = description.as_ref().map(AsRef::as_ref);
         let layout = self.layout()?;
+        let mut writer = IoFmtWriter {
+            inner: writer, error: None
+        };
 
+        if self.write_svg_content(&mut writer, description, layout).is_err() {
+            return Err(writer.error.expect("the I/O adapter stores formatting errors").into());
+        }
+
+        writer.inner.flush()?;
+        Ok(())
+    }
+
+    /// Renders an SVG document as a UTF-8 string.
+    ///
+    /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
+    /// Pass `None::<&str>` when no description is needed.
+    pub fn to_svg_string(
+        self,
+        description: Option<impl AsRef<str>>,
+    ) -> Result<String, RenderError> {
+        let description = description.as_ref().map(AsRef::as_ref);
+        let layout = self.layout()?;
+        let mut svg = String::with_capacity(8192);
+
+        self.write_svg_content(&mut svg, description, layout)
+            .expect("writing an SVG to a String cannot fail");
+
+        Ok(svg)
+    }
+
+    fn write_svg_content<W: fmt::Write>(
+        self,
+        writer: &mut W,
+        description: Option<&str>,
+        layout: Layout,
+    ) -> fmt::Result {
         write!(
             writer,
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg width=\"{}\" height=\"{}\" shape-rendering=\"crispEdges\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\">\n",
@@ -104,9 +145,9 @@ impl<'a> Renderer<'a> {
 
         if let Some(description) = description {
             if !description.is_empty() {
-                writer.write_all(b"\t<desc>")?;
-                html_escape::encode_safe_to_writer(description, &mut writer)?;
-                writer.write_all(b"</desc>\n")?;
+                writer.write_str("\t<desc>")?;
+                writer.write_str(&html_escape::encode_safe(description))?;
+                writer.write_str("</desc>\n")?;
             }
         } else {
             writeln!(
@@ -150,32 +191,18 @@ impl<'a> Renderer<'a> {
                 )?;
             }
         }
-        writer.write_all(b"\"/>\n</svg>")?;
-        writer.flush()?;
-        Ok(())
-    }
-
-    /// Renders an SVG document as a UTF-8 string.
-    ///
-    /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
-    pub fn to_svg_string(self, description: Option<&str>) -> Result<String, RenderError> {
-        let mut bytes = Vec::with_capacity(8192);
-
-        self.write_svg(&mut bytes, description)?;
-
-        // SAFETY: The SVG writer emits UTF-8 literals and escapes the only caller-provided text.
-        Ok(unsafe { String::from_utf8_unchecked(bytes) })
+        writer.write_str("\"/>\n</svg>")
     }
 
     #[cfg(feature = "async-write")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "async-write")))]
     /// Renders an SVG document in memory, then writes and flushes it asynchronously.
     ///
     /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
+    /// Pass `None::<&str>` when no description is needed.
     pub async fn write_svg_async<W: AsyncWrite + Unpin>(
         self,
         mut writer: W,
-        description: Option<&str>,
+        description: Option<impl AsRef<str>>,
     ) -> Result<(), RenderError> {
         let svg = self.to_svg_string(description)?;
 
@@ -187,10 +214,12 @@ impl<'a> Renderer<'a> {
     /// Atomically saves an SVG document after rendering succeeds.
     ///
     /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
+    /// Pass `None::<&str>` when no description is needed.
+    #[cfg(feature = "std")]
     pub fn save_svg(
         self,
         path: impl AsRef<Path>,
-        description: Option<&str>,
+        description: Option<impl AsRef<str>>,
     ) -> Result<(), RenderError> {
         let mut file = AtomicWriteFile::open(path)?;
 
@@ -203,7 +232,7 @@ impl<'a> Renderer<'a> {
 
     #[cfg(feature = "image")]
     /// Writes a grayscale PNG image to a writer.
-    pub fn write_png<W: Write>(self, writer: W) -> Result<(), RenderError> {
+    pub fn write_png<W: IoWrite>(self, writer: W) -> Result<(), RenderError> {
         let image = self.to_luma8()?;
 
         let width = u32::try_from(self.width).map_err(|_| RenderError::ImageSizeTooLarge)?;
@@ -226,7 +255,6 @@ impl<'a> Renderer<'a> {
     }
 
     #[cfg(all(feature = "async-write", feature = "image"))]
-    #[cfg_attr(docsrs, doc(cfg(all(feature = "async-write", feature = "image"))))]
     /// Renders a PNG image in memory, then writes and flushes it asynchronously.
     pub async fn write_png_async<W: AsyncWrite + Unpin>(
         self,
@@ -293,6 +321,22 @@ impl<'a> Renderer<'a> {
             scale,
             margin_x: (self.width - symbol_width) / 2,
             margin_y: (self.height - symbol_height) / 2,
+        })
+    }
+}
+
+#[cfg(feature = "std")]
+struct IoFmtWriter<W> {
+    inner: W,
+    error: Option<io::Error>,
+}
+
+#[cfg(feature = "std")]
+impl<W: IoWrite> fmt::Write for IoFmtWriter<W> {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        self.inner.write_all(text.as_bytes()).map_err(|error| {
+            self.error = Some(error);
+            fmt::Error
         })
     }
 }

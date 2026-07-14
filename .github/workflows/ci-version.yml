@@ -22,7 +22,18 @@ jobs:
           - nightly
         features:
           -
+          - --features micro-qr
+          - --features rmqr
+          - --features url
+          - --features kanji
+          - --features async-write
           - --no-default-features
+          - --no-default-features --features qr
+          - --no-default-features --features micro-qr
+          - --no-default-features --features qr --features micro-qr
+          - --no-default-features --features rmqr
+          - --no-default-features --features qr --features kanji
+          - --all-features
     name: Test ${{ matrix.toolchain }} on ${{ matrix.os }} (${{ matrix.features }})
     runs-on: ${{ matrix.os }}
     steps:
@@ -45,7 +56,17 @@ jobs:
           - 1.89
         features:
           -
+          - --features micro-qr
+          - --features rmqr
+          - --features url
+          - --features kanji
+          - --features async-write
           - --no-default-features
+          - --no-default-features --features qr
+          - --no-default-features --features micro-qr
+          - --no-default-features --features qr --features micro-qr
+          - --no-default-features --features rmqr
+          - --no-default-features --features qr --features kanji
           - --all-features
     name: Test ${{ matrix.toolchain }} on ${{ matrix.os }} (${{ matrix.features }})
     runs-on: ${{ matrix.os }}

@@ -29,7 +29,7 @@ use qrcode_generator::{Renderer, qr::{Encoder, ErrorCorrection}};
 
 let symbol = Encoder::new(ErrorCorrection::Medium).encode_text("Hello, world!").unwrap();
 
-Renderer::new(&symbol, 512).save_svg("hello.svg", None).unwrap();
+Renderer::new(&symbol, 512).save_svg("hello.svg", None::<&str>).unwrap();
 Renderer::new(&symbol, 512).save_png("hello.png").unwrap();
 ```
 
@@ -117,18 +117,26 @@ let symbol = Encoder::new(ErrorCorrection::Medium)
     .unwrap();
 ```
 
-The value must keep its meaning. The repository's `url` example normalizes case-insensitive URL parts this way.
+The value must keep its meaning. With the optional `url` feature, `url::Url` implements `ToQRText` by normalizing case-insensitive URL parts and percent escapes:
+
+```rust
+use qrcode_generator::qr::{Encoder, ErrorCorrection};
+use url::Url;
+
+let url = Url::parse("https://magiclen.org").unwrap();
+let symbol = Encoder::new(ErrorCorrection::Medium).encode_to_qr_text(&url).unwrap();
+```
 
 ## Rendering
 
-A `Renderer` draws a `Symbol` at exact pixel dimensions. `Renderer::new` keeps the square interface, while `Renderer::new_with_dimensions` accepts a separate width and height for rectangular symbols. SVG output needs no extra feature:
+A `Renderer` draws a `Symbol` at exact pixel dimensions. `Renderer::new` keeps the square interface, while `Renderer::new_with_dimensions` accepts a separate width and height for rectangular symbols. In-memory grayscale and SVG output work with `no_std + alloc` and need no extra feature:
 
 ```rust
 use qrcode_generator::{Renderer, qr::{Encoder, ErrorCorrection}};
 
 let symbol = Encoder::new(ErrorCorrection::Low).encode_text("Hello").unwrap();
 
-let svg: String = Renderer::new(&symbol, 512).to_svg_string(None).unwrap();
+let svg: String = Renderer::new(&symbol, 512).to_svg_string(None::<&str>).unwrap();
 let pixels: Vec<u8> = Renderer::new(&symbol, 512).to_luma8().unwrap();
 ```
 
@@ -144,7 +152,7 @@ let png: Vec<u8> = Renderer::new(&symbol, 512).to_png_vec().unwrap();
 Renderer::new(&symbol, 512).save_png("hello.png").unwrap();
 ```
 
-File output through `save_svg` and `save_png` is written atomically, so an existing file is left untouched if rendering fails. The requested size is exact: modules are scaled by the largest whole number that fits, and any pixels left over widen the quiet zone evenly. Use `quiet_zone` to change the margin, down to zero if you want.
+The default `std` feature adds synchronous writer and file output. File output through `save_svg` and `save_png` is written atomically, so an existing file is left untouched if rendering fails. The requested size is exact: modules are scaled by the largest whole number that fits, and any pixels left over widen the quiet zone evenly. Use `quiet_zone` to change the margin, down to zero if you want.
 
 ## Async writing
 
@@ -156,7 +164,7 @@ use qrcode_generator::{AsyncWrite, RenderError, Renderer, qr::{Encoder, ErrorCor
 async fn write<W: AsyncWrite + Unpin>(writer: W) -> Result<(), RenderError> {
     let symbol = Encoder::new(ErrorCorrection::Low).encode_text("Hello").unwrap();
 
-    Renderer::new(&symbol, 512).write_svg_async(writer, None).await
+    Renderer::new(&symbol, 512).write_svg_async(writer, None::<&str>).await
 }
 ```
 
@@ -183,13 +191,13 @@ The optional `rmqr` feature adds all 32 ISO/IEC 23941 rMQR versions. The encoder
 use qrcode_generator::{Renderer, rmqr::{Encoder, ErrorCorrection}};
 
 let symbol = Encoder::new(ErrorCorrection::Medium)
-    .encode_text("https://example.com")
+    .encode_text("https://magiclen.org")
     .unwrap();
 
 let width = (symbol.width() + 4) * 8;
 let height = (symbol.height() + 4) * 8;
 let svg = Renderer::new_with_dimensions(&symbol, width, height)
-    .to_svg_string(None)
+    .to_svg_string(None::<&str>)
     .unwrap();
 ```
 
@@ -236,12 +244,14 @@ The optional `kanji` feature adds Kanji mode to automatic text segmentation and 
 
 ## Cargo features
 
+- `std` (default) enables synchronous writer and file output.
 - `qr` (default) enables the Model 2 QR Code encoder.
-- `image` (default) enables PNG and `ImageBuffer` output.
+- `image` (default, requires `std`) enables PNG and `ImageBuffer` output.
 - `micro-qr` enables the Micro QR Code encoder with all four versions.
 - `rmqr` enables the Rectangular Micro QR Code encoder with all 32 versions.
 - `kanji` enables Shift JIS Kanji segments and automatic Kanji mode selection.
-- `async-write` enables the runtime-independent asynchronous writer methods.
+- `url` implements `ToQRText` for `url::Url` and works with `no_std + alloc`.
+- `async-write` (requires `std`) enables the runtime-independent asynchronous writer methods.
 
 ## Crates.io
 

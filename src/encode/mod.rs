@@ -1,3 +1,11 @@
+#[cfg(feature = "qr")]
+use alloc::collections::BTreeMap;
+#[cfg(feature = "qr")]
+use alloc::vec;
+use alloc::{string::String, vec::Vec};
+#[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
+use core::ops::RangeInclusive;
+
 mod bits;
 #[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
 mod reed_solomon;
@@ -10,9 +18,6 @@ mod model2;
 mod optimizer;
 #[cfg(feature = "rmqr")]
 mod rmqr;
-
-#[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
-use std::ops::RangeInclusive;
 
 use bits::BitBuffer;
 
@@ -616,7 +621,8 @@ pub struct Segment {
 
 impl Segment {
     /// Creates a Numeric segment from ASCII digits.
-    pub fn numeric(data: &str) -> Result<Self, EncodeError> {
+    pub fn numeric(data: impl AsRef<str>) -> Result<Self, EncodeError> {
+        let data = data.as_ref();
         let mut bits = BitBuffer::with_capacity(data.len() * 10 / 3 + 4);
         let bytes = data.as_bytes();
 
@@ -643,7 +649,8 @@ impl Segment {
     }
 
     /// Creates an Alphanumeric segment from the standard 45-character set.
-    pub fn alphanumeric(data: &str) -> Result<Self, EncodeError> {
+    pub fn alphanumeric(data: impl AsRef<str>) -> Result<Self, EncodeError> {
+        let data = data.as_ref();
         let mut values = Vec::with_capacity(data.len());
 
         for (offset, byte) in data.bytes().enumerate() {
@@ -714,7 +721,8 @@ impl Segment {
     }
 
     /// Creates a Byte segment without adding an ECI header.
-    pub fn bytes(data: &[u8]) -> Self {
+    pub fn bytes(data: impl AsRef<[u8]>) -> Self {
+        let data = data.as_ref();
         let mut bits = BitBuffer::with_capacity(data.len() * 8);
 
         for &byte in data {
@@ -756,7 +764,8 @@ impl Segment {
 
     #[cfg(feature = "kanji")]
     /// Creates a Kanji segment from characters in the supported Shift JIS ranges.
-    pub fn kanji(data: &str) -> Result<Self, EncodeError> {
+    pub fn kanji(data: impl AsRef<str>) -> Result<Self, EncodeError> {
+        let data = data.as_ref();
         let mut bits = BitBuffer::with_capacity(data.chars().count() * 13);
         let mut source = Vec::with_capacity(data.len() * 2);
         let mut count = 0;
@@ -917,6 +926,7 @@ impl Symbol {
 /// Converts a value to text for QR Code encoding.
 ///
 /// Implementations can use a shorter equivalent spelling when the value has more than one text representation.
+/// The optional `url` feature implements this trait for `url::Url`.
 pub trait ToQRText {
     /// Returns the text to encode.
     fn to_qr_text(&self) -> String;
@@ -983,7 +993,8 @@ impl QrEncoder {
     }
 
     /// Encodes raw bytes with globally optimized Numeric, Alphanumeric and Byte segments.
-    pub fn encode_bytes(&self, data: &[u8]) -> Result<Symbol, EncodeError> {
+    pub fn encode_bytes(&self, data: impl AsRef<[u8]>) -> Result<Symbol, EncodeError> {
+        let data = data.as_ref();
         let (capacity, capacity_bits) = self.input_capacity_upper_bound(false)?;
 
         ensure_input_length(data.len(), capacity, capacity_bits, 1)?;
@@ -992,7 +1003,8 @@ impl QrEncoder {
     }
 
     /// Encodes text with globally optimized character modes and ECI transitions.
-    pub fn encode_text(&self, text: &str) -> Result<Symbol, EncodeError> {
+    pub fn encode_text(&self, text: impl AsRef<str>) -> Result<Symbol, EncodeError> {
+        let text = text.as_ref();
         let (capacity, capacity_bits) = self.input_capacity_upper_bound(false)?;
 
         ensure_input_length(text.chars().count(), capacity, capacity_bits, 1)?;
@@ -1137,8 +1149,10 @@ impl QrEncoder {
     /// Encodes bytes as one symbol or automatically splits them into at most 16 Structured Append symbols.
     pub fn encode_bytes_with_structured_append(
         &self,
-        data: &[u8],
+        data: impl AsRef<[u8]>,
     ) -> Result<Vec<Symbol>, EncodeError> {
+        let data = data.as_ref();
+
         match self.encode_bytes(data) {
             Ok(symbol) => return Ok(vec![symbol]),
             Err(EncodeError::DataTooLong {
@@ -1185,8 +1199,10 @@ impl QrEncoder {
     /// Encodes text as one symbol or automatically splits it into at most 16 Structured Append symbols.
     pub fn encode_text_with_structured_append(
         &self,
-        text: &str,
+        text: impl AsRef<str>,
     ) -> Result<Vec<Symbol>, EncodeError> {
+        let text = text.as_ref();
+
         match self.encode_text(text) {
             Ok(symbol) => return Ok(vec![symbol]),
             Err(EncodeError::DataTooLong {
@@ -1620,7 +1636,8 @@ impl RmqrEncoder {
     }
 
     /// Encodes raw bytes with globally optimized Numeric, Alphanumeric and Byte segments.
-    pub fn encode_bytes(&self, data: &[u8]) -> Result<Symbol, EncodeError> {
+    pub fn encode_bytes(&self, data: impl AsRef<[u8]>) -> Result<Symbol, EncodeError> {
+        let data = data.as_ref();
         let (capacity, capacity_bits) = self.input_capacity_upper_bound()?;
 
         ensure_input_length(data.len(), capacity, capacity_bits, 1)?;
@@ -1634,7 +1651,8 @@ impl RmqrEncoder {
     }
 
     /// Encodes text with globally optimized character modes and ECI transitions.
-    pub fn encode_text(&self, text: &str) -> Result<Symbol, EncodeError> {
+    pub fn encode_text(&self, text: impl AsRef<str>) -> Result<Symbol, EncodeError> {
+        let text = text.as_ref();
         let (capacity, capacity_bits) = self.input_capacity_upper_bound()?;
 
         ensure_input_length(text.chars().count(), capacity, capacity_bits, 1)?;
@@ -1811,7 +1829,8 @@ impl MicroEncoder {
     }
 
     /// Encodes raw bytes with globally optimized modes supported by each candidate version.
-    pub fn encode_bytes(&self, data: &[u8]) -> Result<Symbol, EncodeError> {
+    pub fn encode_bytes(&self, data: impl AsRef<[u8]>) -> Result<Symbol, EncodeError> {
+        let data = data.as_ref();
         if let Some((version, capacity, capacity_bits)) = self.input_capacity_upper_bound()?
             && micro_bytes_are_representable(data, version)
         {
@@ -1822,7 +1841,8 @@ impl MicroEncoder {
     }
 
     /// Encodes text with globally optimized modes supported by each candidate version.
-    pub fn encode_text(&self, text: &str) -> Result<Symbol, EncodeError> {
+    pub fn encode_text(&self, text: impl AsRef<str>) -> Result<Symbol, EncodeError> {
+        let text = text.as_ref();
         if let Some((version, capacity, capacity_bits)) = self.input_capacity_upper_bound()?
             && micro_text_is_representable_without_kanji(text, version)
         {
@@ -1914,7 +1934,8 @@ impl AutoEncoder {
     }
 
     /// Encodes raw bytes using the smallest eligible symbol family.
-    pub fn encode_bytes(&self, data: &[u8]) -> Result<Symbol, EncodeError> {
+    pub fn encode_bytes(&self, data: impl AsRef<[u8]>) -> Result<Symbol, EncodeError> {
+        let data = data.as_ref();
         match self.micro.encode_bytes(data) {
             Ok(symbol) => Ok(symbol),
             Err(error) if candidate_rejection(&error) => self.qr.encode_bytes(data),
@@ -1923,7 +1944,8 @@ impl AutoEncoder {
     }
 
     /// Encodes text using the smallest eligible symbol family.
-    pub fn encode_text(&self, text: &str) -> Result<Symbol, EncodeError> {
+    pub fn encode_text(&self, text: impl AsRef<str>) -> Result<Symbol, EncodeError> {
+        let text = text.as_ref();
         match self.micro.encode_text(text) {
             Ok(symbol) => Ok(symbol),
             Err(error) if candidate_rejection(&error) => self.qr.encode_text(text),
@@ -1975,7 +1997,7 @@ where
 
     for _ in 0..part_count {
         let previous_layer = layers.last().expect("the initial layer exists");
-        let mut by_end = std::collections::BTreeMap::new();
+        let mut by_end = BTreeMap::new();
 
         for (previous, state) in previous_layer.iter().enumerate() {
             for value in range.start().value()..=range.end().value() {

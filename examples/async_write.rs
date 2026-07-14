@@ -21,7 +21,7 @@ fn main() {
 
     let mut svg = Vec::new();
 
-    block_on(Renderer::new(&symbol, 512).write_svg_async(&mut svg, None)).unwrap();
+    block_on(Renderer::new(&symbol, 512).write_svg_async(&mut svg, None::<&str>)).unwrap();
 
     println!("wrote {} SVG bytes through the async writer", svg.len());
 }

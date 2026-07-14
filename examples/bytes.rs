@@ -14,7 +14,7 @@ fn main() {
 
     let symbol = Encoder::new(ErrorCorrection::Quartile).encode_bytes(payload).unwrap();
 
-    Renderer::new(&symbol, 512).save_svg("bytes.svg", None).unwrap();
+    Renderer::new(&symbol, 512).save_svg("bytes_output.svg", None::<&str>).unwrap();
 
-    println!("wrote bytes.svg ({} modules per side)", symbol.size());
+    println!("wrote bytes_output.svg ({} modules per side)", symbol.size());
 }

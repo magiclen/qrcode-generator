@@ -54,16 +54,18 @@ jobs:
       fail-fast: false
       matrix:
         features:
+          -
+          - --features micro-qr
+          - --features rmqr
+          - --features url
+          - --features kanji
+          - --features async-write
+          - --no-default-features
           - --no-default-features --features qr
           - --no-default-features --features micro-qr
+          - --no-default-features --features qr --features micro-qr
           - --no-default-features --features rmqr
-          - --no-default-features --features qr,micro-qr
-          - --no-default-features --features qr,rmqr
-          - --no-default-features --features micro-qr,rmqr
-          - --no-default-features --features qr,kanji
-          - --no-default-features --features micro-qr,kanji
-          - --no-default-features --features rmqr,kanji
-          - --no-default-features --features qr,async-write
+          - --no-default-features --features qr --features kanji
           - --all-features
     name: Test feature combination (${{ matrix.features }})
     runs-on: ubuntu-latest
@@ -84,7 +86,17 @@ jobs:
           - 1.89
         features:
           -
+          - --features micro-qr
+          - --features rmqr
+          - --features url
+          - --features kanji
+          - --features async-write
           - --no-default-features
+          - --no-default-features --features qr
+          - --no-default-features --features micro-qr
+          - --no-default-features --features qr --features micro-qr
+          - --no-default-features --features rmqr
+          - --no-default-features --features qr --features kanji
           - --all-features
     name: Test ${{ matrix.toolchain }} on ${{ matrix.os }} (${{ matrix.features }})
     runs-on: ${{ matrix.os }}

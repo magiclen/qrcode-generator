@@ -1,3 +1,5 @@
+use alloc::{vec, vec::Vec};
+
 pub(crate) fn divisor(degree: usize) -> Vec<u8> {
     debug_assert!((1..=255).contains(&degree));
 

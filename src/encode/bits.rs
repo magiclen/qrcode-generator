@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct BitBuffer {
     bytes: Vec<u8>,

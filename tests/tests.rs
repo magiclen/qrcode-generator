@@ -6,7 +6,7 @@ use std::{
 
 #[cfg(all(feature = "qr", feature = "micro-qr"))]
 use qrcode_generator::AutoEncoder;
-#[cfg(feature = "rmqr")]
+#[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
 use qrcode_generator::Segment;
 #[cfg(feature = "qr")]
 use qrcode_generator::ToQRText;
@@ -320,9 +320,80 @@ fn svg_uses_default_and_custom_quiet_zones() {
     assert!(svg.contains("M16 16"));
 
     let size = symbol.size() * 4;
-    let svg = Renderer::new(&symbol, size).quiet_zone(0).to_svg_string(None).unwrap();
+    let svg = Renderer::new(&symbol, size).quiet_zone(0).to_svg_string(None::<&str>).unwrap();
 
     assert!(svg.contains("M0 0"));
+}
+
+#[cfg(all(feature = "std", feature = "qr"))]
+#[test]
+fn svg_writer_matches_in_memory_rendering() {
+    let symbol = Encoder::new(ErrorCorrection::Low).encode_text("HELLO").unwrap();
+
+    for description in [None::<&str>, Some("plain")] {
+        let renderer = Renderer::new(&symbol, 256);
+        let expected = renderer.to_svg_string(description).unwrap();
+        let mut actual = Vec::new();
+
+        renderer.write_svg(&mut actual, description).unwrap();
+
+        assert_eq!(actual, expected.as_bytes());
+    }
+
+    let renderer = Renderer::new(&symbol, 256);
+    let description = String::from("<&>");
+    let expected = renderer.to_svg_string(Some(description.clone())).unwrap();
+    let mut actual = Vec::new();
+
+    renderer.write_svg(&mut actual, Some(description)).unwrap();
+
+    assert_eq!(actual, expected.as_bytes());
+}
+
+#[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
+#[test]
+fn public_encoders_accept_owned_text_and_bytes() {
+    Segment::numeric(String::from("12345")).unwrap();
+    Segment::alphanumeric(String::from("HELLO")).unwrap();
+    Segment::bytes(vec![0x12, 0x34]);
+
+    #[cfg(feature = "kanji")]
+    Segment::kanji(String::from("日本")).unwrap();
+
+    #[cfg(feature = "qr")]
+    {
+        Encoder::new(ErrorCorrection::Low).encode_text(String::from("HELLO")).unwrap();
+        Encoder::new(ErrorCorrection::Low).encode_bytes(vec![0x12, 0x34]).unwrap();
+        Encoder::new(ErrorCorrection::Low)
+            .encode_text_with_structured_append(String::from("HELLO"))
+            .unwrap();
+        Encoder::new(ErrorCorrection::Low)
+            .encode_bytes_with_structured_append(vec![0x12, 0x34])
+            .unwrap();
+    }
+
+    #[cfg(feature = "micro-qr")]
+    {
+        MicroEncoder::new(MicroErrorCorrection::Low).encode_text(String::from("12345")).unwrap();
+        MicroEncoder::new(MicroErrorCorrection::Low).encode_bytes(vec![1, 2, 3]).unwrap();
+    }
+
+    #[cfg(feature = "rmqr")]
+    {
+        RmqrEncoder::new(RmqrErrorCorrection::Medium).encode_text(String::from("HELLO")).unwrap();
+        RmqrEncoder::new(RmqrErrorCorrection::Medium).encode_bytes(vec![1, 2, 3]).unwrap();
+    }
+
+    #[cfg(all(feature = "qr", feature = "micro-qr"))]
+    {
+        let encoder = AutoEncoder::new(
+            Encoder::new(ErrorCorrection::Low),
+            MicroEncoder::new(MicroErrorCorrection::Low),
+        );
+
+        encoder.encode_text(String::from("12345")).unwrap();
+        encoder.encode_bytes(vec![1, 2, 3]).unwrap();
+    }
 }
 
 #[cfg(all(feature = "qr", feature = "async-write"))]
@@ -383,7 +454,7 @@ fn automatic_structured_append_splits_and_round_trips() {
     assert_eq!(decoded, data);
 }
 
-#[cfg(feature = "qr")]
+#[cfg(all(feature = "std", feature = "qr"))]
 #[test]
 fn atomic_file_output_preserves_an_existing_file_on_render_error() {
     let symbol = Encoder::new(ErrorCorrection::Low).encode_text("HELLO").unwrap();
@@ -395,7 +466,7 @@ fn atomic_file_output_preserves_an_existing_file_on_render_error() {
 
     std::fs::write(&path, b"original").unwrap();
 
-    assert!(Renderer::new(&symbol, 1).save_svg(&path, None).is_err());
+    assert!(Renderer::new(&symbol, 1).save_svg(&path, None::<&str>).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), b"original");
 
     Renderer::new(&symbol, 256).save_svg(&path, Some("atomic")).unwrap();
@@ -426,7 +497,7 @@ fn micro_svg_uses_the_standard_quiet_zone() {
         .encode_text("12345")
         .unwrap();
     let size = (symbol.size() + 4) * 4;
-    let svg = Renderer::new(&symbol, size).to_svg_string(None).unwrap();
+    let svg = Renderer::new(&symbol, size).to_svg_string(None::<&str>).unwrap();
 
     assert!(svg.contains("M8 8"));
 }
@@ -593,7 +664,8 @@ fn rmqr_eci_fnc1_segments_and_renderer_follow_the_public_api() {
 
     let width = (symbol.width() + 4) * 4;
     let height = (symbol.height() + 4) * 4;
-    let svg = Renderer::new_with_dimensions(&symbol, width, height).to_svg_string(None).unwrap();
+    let svg =
+        Renderer::new_with_dimensions(&symbol, width, height).to_svg_string(None::<&str>).unwrap();
 
     assert!(svg.contains(&format!("<svg width=\"{width}\" height=\"{height}\"")));
     assert!(svg.contains("M8 8"));

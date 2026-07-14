@@ -1,4 +1,6 @@
-use std::{error::Error, fmt, io};
+use core::{error::Error, fmt};
+#[cfg(feature = "std")]
+use std::io;
 
 #[cfg(feature = "micro-qr")]
 use crate::{SymbolErrorCorrection, SymbolVersion};
@@ -101,6 +103,7 @@ pub enum RenderError {
     /// The requested output dimensions overflow a supported image size.
     ImageSizeTooLarge,
     /// An input or output operation failed.
+    #[cfg(feature = "std")]
     Io(io::Error),
     #[cfg(feature = "image")]
     /// PNG encoding failed.
@@ -114,6 +117,7 @@ impl fmt::Display for RenderError {
                 f.write_str("image size is too small to draw the whole symbol")
             },
             Self::ImageSizeTooLarge => f.write_str("image size is too large to generate"),
+            #[cfg(feature = "std")]
             Self::Io(error) => fmt::Display::fmt(error, f),
             #[cfg(feature = "image")]
             Self::Image(error) => fmt::Display::fmt(error, f),
@@ -124,6 +128,7 @@ impl fmt::Display for RenderError {
 impl Error for RenderError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            #[cfg(feature = "std")]
             Self::Io(error) => Some(error),
             #[cfg(feature = "image")]
             Self::Image(error) => Some(error),
@@ -132,6 +137,7 @@ impl Error for RenderError {
     }
 }
 
+#[cfg(feature = "std")]
 impl From<io::Error> for RenderError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)

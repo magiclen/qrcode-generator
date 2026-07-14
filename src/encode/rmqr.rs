@@ -1,3 +1,5 @@
+use alloc::{vec, vec::Vec};
+
 use super::{
     Fnc1, Mode, RmqrErrorCorrection, RmqrVersion, Segment, Symbol, SymbolVersion, bits::BitBuffer,
     reed_solomon,
@@ -751,6 +753,8 @@ fn format_code(data: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::String;
+
     use super::*;
 
     #[test]
