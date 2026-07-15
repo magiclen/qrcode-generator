@@ -1,4 +1,4 @@
-use alloc::{vec, vec::Vec};
+use alloc::{collections::VecDeque, vec, vec::Vec};
 
 #[cfg(feature = "qr")]
 use super::QrVersion;
@@ -78,42 +78,89 @@ pub(crate) fn bytes(
     best[0] = Some(ByteStep {
         bits: 0, segments: 0, previous: 0, mode: Mode::Byte
     });
-    for start in 0..data.len() {
+
+    let byte_overhead = profile.mode_bits as usize + profile.cci_bits(Mode::Byte) as usize;
+    let byte_window = max_count(Mode::Byte, profile);
+    // A monotonic queue keeps the cheapest in-range byte-segment start, making each byte edge O(1).
+    let mut byte_starts: VecDeque<(isize, usize, usize)> = VecDeque::new();
+
+    for end in 0..=data.len() {
+        if end >= 1 {
+            while byte_starts.front().is_some_and(|&(.., start)| start + byte_window < end) {
+                byte_starts.pop_front();
+            }
+
+            if let Some(&(.., start)) = byte_starts.front() {
+                let prefix = best[start].expect("a queued byte start stays reachable");
+
+                update_byte(
+                    &mut best[end],
+                    prefix,
+                    start,
+                    Mode::Byte,
+                    byte_overhead + (end - start) * 8,
+                );
+            }
+        }
+
+        if end == data.len() {
+            break;
+        }
+
+        let start = end;
+
         let Some(prefix) = best[start] else {
             continue;
         };
-        let mut end = start;
-        while end < data.len()
-            && end - start < max_count(Mode::Numeric, profile)
-            && data[end].is_ascii_digit()
+
+        // The ordered queue lets any later end reuse this start as a byte-segment beginning.
+        let key = (prefix.bits as isize - 8 * start as isize, prefix.segments, start);
+
+        while byte_starts.back().is_some_and(|&back| back >= key) {
+            byte_starts.pop_back();
+        }
+
+        byte_starts.push_back(key);
+
+        let mut cursor = start;
+
+        while cursor < data.len()
+            && cursor - start < max_count(Mode::Numeric, profile)
+            && data[cursor].is_ascii_digit()
         {
-            end += 1;
+            cursor += 1;
             update_byte(
-                &mut best[end],
+                &mut best[cursor],
                 prefix,
                 start,
                 Mode::Numeric,
                 profile.mode_bits as usize
                     + profile.cci_bits(Mode::Numeric) as usize
-                    + numeric_bits(end - start),
+                    + numeric_bits(cursor - start),
             );
         }
 
         // FNC1 encodes a literal percent as two alphanumeric characters.
         let mut encoded_count = 0;
-        end = start;
-        while end < data.len() {
-            let byte = data[end];
+
+        cursor = start;
+
+        while cursor < data.len() {
+            let byte = data[cursor];
+
             if alphanumeric_value(byte).is_none() && !(fnc1 && byte == 0x1D) {
                 break;
             }
+
             encoded_count += usize::from(fnc1 && byte == b'%') + 1;
+
             if encoded_count > max_count(Mode::Alphanumeric, profile) {
                 break;
             }
-            end += 1;
+
+            cursor += 1;
             update_byte(
-                &mut best[end],
+                &mut best[cursor],
                 prefix,
                 start,
                 Mode::Alphanumeric,
@@ -122,18 +169,8 @@ pub(crate) fn bytes(
                     + alphanumeric_bits(encoded_count),
             );
         }
-
-        let maximum = max_count(Mode::Byte, profile).min(data.len() - start);
-        for count in 1..=maximum {
-            update_byte(
-                &mut best[start + count],
-                prefix,
-                start,
-                Mode::Byte,
-                profile.mode_bits as usize + profile.cci_bits(Mode::Byte) as usize + count * 8,
-            );
-        }
     }
+
     reconstruct_bytes(data, best, fnc1)
 }
 
@@ -153,6 +190,24 @@ struct TextStep {
     mode:                    Mode,
     interpretation:          Interpretation,
     switched:                bool,
+}
+
+#[derive(Clone, Copy)]
+struct ByteEntry {
+    // Candidate cost with the end-dependent term removed so entries compare independently of the end.
+    cost:     isize,
+    switches: usize,
+    segments: usize,
+    start:    usize,
+    step:     TextStep,
+    active:   Interpretation,
+}
+
+impl ByteEntry {
+    #[inline]
+    const fn key(self) -> (isize, usize, usize, usize) {
+        (self.cost, self.switches, self.segments, self.start)
+    }
 }
 
 pub(crate) fn text(
@@ -195,11 +250,119 @@ pub(crate) fn text(
         });
     }
 
-    for start in 0..length {
+    let eci_bits = profile.eci_bits();
+    let byte_overhead = profile.mode_bits as usize + profile.cci_bits(Mode::Byte) as usize;
+    let byte_window = max_count(Mode::Byte, profile);
+    // Latin1 byte segments cannot span a character above U+00FF.
+    let wide: Vec<bool> = text.chars().map(|character| u32::from(character) > 0xFF).collect();
+
+    // A monotonic queue per target keeps the cheapest in-range byte-segment start, making byte edges O(1).
+    let mut latin1_bytes: VecDeque<ByteEntry> = VecDeque::new();
+    let mut utf8_bytes: VecDeque<ByteEntry> = VecDeque::new();
+
+    for position in 0..=length {
+        if position >= 1 {
+            while utf8_bytes
+                .front()
+                .is_some_and(|entry| offsets[entry.start] + byte_window < offsets[position])
+            {
+                utf8_bytes.pop_front();
+            }
+
+            if let Some(entry) = utf8_bytes.front().copied() {
+                let switched = entry.active != Interpretation::Utf8;
+
+                update_text(
+                    &mut best[position][Interpretation::Utf8 as usize],
+                    entry.step,
+                    entry.start,
+                    entry.active,
+                    Mode::Byte,
+                    Interpretation::Utf8,
+                    switched,
+                    usize::from(switched) * eci_bits
+                        + byte_overhead
+                        + (offsets[position] - offsets[entry.start]) * 8,
+                );
+            }
+
+            if wide[position - 1] {
+                latin1_bytes.clear();
+            } else {
+                while latin1_bytes.front().is_some_and(|entry| entry.start + byte_window < position)
+                {
+                    latin1_bytes.pop_front();
+                }
+
+                if let Some(entry) = latin1_bytes.front().copied() {
+                    let switched = entry.active != Interpretation::Latin1;
+
+                    update_text(
+                        &mut best[position][Interpretation::Latin1 as usize],
+                        entry.step,
+                        entry.start,
+                        entry.active,
+                        Mode::Byte,
+                        Interpretation::Latin1,
+                        switched,
+                        usize::from(switched) * eci_bits
+                            + byte_overhead
+                            + (position - entry.start) * 8,
+                    );
+                }
+            }
+        }
+
+        if position == length {
+            break;
+        }
+
+        let start = position;
+
         for active in [Interpretation::Latin1, Interpretation::Utf8] {
             let Some(prefix) = best[start][active as usize] else {
                 continue;
             };
+
+            // Queue this start as a byte-segment source for the Latin1 target.
+            {
+                let switched = active != Interpretation::Latin1;
+                let entry = ByteEntry {
+                    cost: prefix.bits as isize + (usize::from(switched) * eci_bits) as isize
+                        - 8 * start as isize,
+                    switches: prefix.switches + usize::from(switched),
+                    segments: prefix.segments + usize::from(switched),
+                    start,
+                    step: prefix,
+                    active,
+                };
+
+                while latin1_bytes.back().is_some_and(|back| back.key() > entry.key()) {
+                    latin1_bytes.pop_back();
+                }
+
+                latin1_bytes.push_back(entry);
+            }
+
+            // Queue this start as a byte-segment source for the Utf8 target.
+            {
+                let switched = active != Interpretation::Utf8;
+                let entry = ByteEntry {
+                    cost: prefix.bits as isize + (usize::from(switched) * eci_bits) as isize
+                        - 8 * offsets[start] as isize,
+                    switches: prefix.switches + usize::from(switched),
+                    segments: prefix.segments + usize::from(switched),
+                    start,
+                    step: prefix,
+                    active,
+                };
+
+                while utf8_bytes.back().is_some_and(|back| back.key() > entry.key()) {
+                    utf8_bytes.pop_back();
+                }
+
+                utf8_bytes.push_back(entry);
+            }
 
             let mut end = start;
 
@@ -256,65 +419,6 @@ pub(crate) fn text(
                     profile.mode_bits as usize
                         + profile.cci_bits(Mode::Alphanumeric) as usize
                         + alphanumeric_bits(encoded_count),
-                );
-            }
-
-            let mut latin1_count = 0;
-
-            for end in start + 1..=length {
-                let character = text[offsets[end - 1]..offsets[end]]
-                    .chars()
-                    .next()
-                    .expect("the range contains one character");
-
-                if u32::from(character) > 0xFF {
-                    break;
-                }
-
-                latin1_count += 1;
-
-                if latin1_count > max_count(Mode::Byte, profile) {
-                    break;
-                }
-
-                let switched = active != Interpretation::Latin1;
-
-                update_text(
-                    &mut best[end][Interpretation::Latin1 as usize],
-                    prefix,
-                    start,
-                    active,
-                    Mode::Byte,
-                    Interpretation::Latin1,
-                    switched,
-                    usize::from(switched) * profile.eci_bits()
-                        + profile.mode_bits as usize
-                        + profile.cci_bits(Mode::Byte) as usize
-                        + latin1_count * 8,
-                );
-            }
-
-            for end in start + 1..=length {
-                let byte_count = offsets[end] - offsets[start];
-
-                if byte_count > max_count(Mode::Byte, profile) {
-                    break;
-                }
-
-                let switched = active != Interpretation::Utf8;
-
-                update_text(
-                    &mut best[end][Interpretation::Utf8 as usize],
-                    prefix,
-                    start,
-                    active,
-                    Mode::Byte,
-                    Interpretation::Utf8,
-                    switched,
-                    usize::from(switched) * profile.eci_bits()
-                        + profile.mode_bits as usize
-                        + profile.cci_bits(Mode::Byte) as usize
-                        + byte_count * 8,
                 );
             }
 

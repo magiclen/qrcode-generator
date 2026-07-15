@@ -335,10 +335,47 @@ impl RmqrVersion {
         Self::R17x99,
         Self::R17x139,
     ];
+    // Versions ordered by area, then height, then width; sorted once at compile time for candidate search.
+    pub(crate) const ALL_BY_AREA: [Self; 32] = Self::sorted_by_area();
     /// The last rMQR version in format indicator order.
     pub const MAX: Self = Self::R17x139;
     /// The first rMQR version in format indicator order.
     pub const MIN: Self = Self::R7x43;
+
+    const fn sorted_by_area() -> [Self; 32] {
+        let mut versions = Self::ALL;
+        let length = versions.len();
+        let mut index = 0;
+
+        // A selection sort is enough for a const array of thirty-two versions.
+        while index < length {
+            let mut smallest = index;
+            let mut candidate = index + 1;
+
+            while candidate < length {
+                if versions[candidate].area_key() < versions[smallest].area_key() {
+                    smallest = candidate;
+                }
+
+                candidate += 1;
+            }
+
+            let swap = versions[index];
+            versions[index] = versions[smallest];
+            versions[smallest] = swap;
+            index += 1;
+        }
+
+        versions
+    }
+
+    // Packs area, height and width into one number that orders the same way as the (area, height, width) tuple.
+    const fn area_key(self) -> u64 {
+        let width = self.width() as u64;
+        let height = self.height() as u64;
+
+        (width * height) * 1_000_000 + height * 1_000 + width
+    }
 
     /// Returns the five-bit version indicator value.
     #[inline]
@@ -853,7 +890,7 @@ pub struct Symbol {
 impl Symbol {
     /// Returns the symbol width in modules.
     ///
-    /// For square symbol families this is also the symbol height.
+    /// The square QR Code and Micro QR Code families use this as the height as well, but Rectangular Micro QR Code symbols are not square, so read [`width`](Self::width) and [`height`](Self::height) separately for them.
     #[inline]
     pub const fn size(&self) -> usize {
         self.width()
@@ -1813,16 +1850,10 @@ impl RmqrEncoder {
             return Err(EncodeError::InvalidVersionRange);
         }
 
-        let mut versions: Vec<_> = RmqrVersion::ALL
+        Ok(RmqrVersion::ALL_BY_AREA
             .into_iter()
             .filter(|version| self.versions.contains(version))
-            .collect();
-
-        versions.sort_by_key(|version| {
-            (version.width() * version.height(), version.height(), version.width())
-        });
-
-        Ok(versions)
+            .collect())
     }
 }
 

@@ -24,6 +24,7 @@ encoding_rs = { version = "0.8.29", optional = true, default-features = false, f
 url = { version = "2", optional = true, default-features = false }
 
 [dev-dependencies]
+bencher = "0.1"
 quircs = "0.10"
 rxing = { version = "0.9", default-features = false, features = ["decoders", "encoding_rs", "qrcode"] }
 
@@ -84,6 +85,16 @@ required-features = ["std", "qr"]
 [[example]]
 name = "async_write"
 required-features = ["std", "qr", "async-write"]
+
+[[bench]]
+name = "encode"
+harness = false
+required-features = ["qr", "micro-qr", "rmqr"]
+
+[[bench]]
+name = "render"
+harness = false
+required-features = ["qr", "image"]
 
 [package.metadata.docs.rs]
 all-features = true

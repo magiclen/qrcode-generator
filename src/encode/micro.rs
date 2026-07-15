@@ -74,14 +74,18 @@ pub(crate) fn optimize(data: &[u8], version: MicroVersion) -> Result<Vec<Segment
         }
     }
 
+    if let Some(position) = best.iter().position(Option::is_none) {
+        return Err(EncodeError::TextNotRepresentable {
+            byte_offset: position - 1,
+            family:      "Micro QR Code",
+        });
+    }
+
     let mut position = data.len();
     let mut ranges = Vec::new();
 
     while position != 0 {
-        let step = best[position].ok_or(EncodeError::UnsupportedMode {
-            mode:   "input data",
-            family: "the selected Micro QR version",
-        })?;
+        let step = best[position].expect("every byte position stays reachable");
         ranges.push((step.previous, position, step.mode));
         position = step.previous;
     }

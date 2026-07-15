@@ -467,6 +467,8 @@ fn final_message(
 ) -> BitBuffer {
     let info = version_info(version);
     let ec = ec_info(version, error_correction);
+    // Every block in a symbol shares the same error correction length, so the divisor is built once.
+    let divisor = reed_solomon::divisor((ec.groups[0].total - ec.groups[0].data) as usize);
     let mut blocks = Vec::new();
     let mut offset = 0;
 
@@ -474,7 +476,6 @@ fn final_message(
         for _ in 0..group.count {
             let data_length = group.data as usize;
             let block_data = data[offset..offset + data_length].to_vec();
-            let divisor = reed_solomon::divisor((group.total - group.data) as usize);
             let ecc = reed_solomon::remainder(&block_data, &divisor);
 
             blocks.push((block_data, ecc));
