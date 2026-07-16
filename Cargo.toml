@@ -18,7 +18,7 @@ html-escape = { version = "0.2", default-features = false }
 
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 
-futures-io = { version = "0.3", optional = true, default-features = false, features = ["std"] }
+tokio = { version = "1", optional = true, default-features = false, features = ["rt", "io-util"] }
 
 encoding_rs = { version = "0.8.29", optional = true, default-features = false, features = ["alloc", "fast-kanji-encode"] }
 url = { version = "2", optional = true, default-features = false }
@@ -27,6 +27,7 @@ url = { version = "2", optional = true, default-features = false }
 bencher = "0.1"
 quircs = "0.10"
 rxing = { version = "0.9", default-features = false, features = ["decoders", "encoding_rs", "qrcode"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "fs", "io-util"] }
 
 [features]
 default = ["std", "qr", "image"]
@@ -34,7 +35,7 @@ default = ["std", "qr", "image"]
 std = ["dep:atomic-write-file", "html-escape/std", "url?/std"]
 
 image = ["std", "dep:image"]
-async-write = ["std", "dep:futures-io"]
+tokio = ["std", "dep:tokio"]
 kanji = ["dep:encoding_rs"]
 url = ["dep:url"]
 
@@ -83,8 +84,12 @@ name = "kanji"
 required-features = ["std", "qr"]
 
 [[example]]
-name = "async_write"
-required-features = ["std", "qr", "async-write"]
+name = "tokio_file"
+required-features = ["std", "qr", "tokio"]
+
+[[example]]
+name = "fnc1"
+required-features = ["std", "qr"]
 
 [[bench]]
 name = "encode"

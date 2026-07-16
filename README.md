@@ -156,17 +156,19 @@ The default `std` feature adds synchronous writer and file output. File output t
 
 ## Async writing
 
-The optional `async-write` feature adds `write_svg_async` and, with the `image` feature, `write_png_async`. Rendering stays synchronous; only writing and flushing are asynchronous:
+The optional `tokio` feature adds `write_svg_async` and, with the `image` feature, `write_png_async`, which write and flush to any `tokio::io::AsyncWrite`, including a `tokio::fs::File`. Rendering stays synchronous; only writing and flushing are asynchronous:
 
 ```rust
-use qrcode_generator::{AsyncWrite, RenderError, Renderer, qr::{Encoder, ErrorCorrection}};
+use qrcode_generator::{RenderError, Renderer, qr::{Encoder, ErrorCorrection}};
 
-async fn write<W: AsyncWrite + Unpin>(writer: W) -> Result<(), RenderError> {
+async fn write<W: tokio::io::AsyncWrite + Unpin>(writer: W) -> Result<(), RenderError> {
     let symbol = Encoder::new(ErrorCorrection::Low).encode_text("Hello").unwrap();
 
     Renderer::new(&symbol, 512).write_svg_async(writer, None::<&str>).await
 }
 ```
+
+The feature also adds `save_svg_async` and `save_png_async`, which save to a path atomically like their synchronous counterparts by running the write on tokio's blocking pool.
 
 ## Micro QR Code
 
@@ -222,7 +224,17 @@ let symbol = encoder.encode_text("HELLO 123").unwrap();
 
 These two QR Code features serve data-exchange standards rather than plain text.
 
-*FNC1* marks a symbol as following a formatted-data standard. `qr::Encoder::fnc1` selects GS1 semantics or an industry application indicator.
+*FNC1* marks a symbol as following a formatted-data standard rather than plain text. First position selects GS1, whose element strings concatenate application identifiers and separate variable-length ones with a `0x1D` (GS) byte; second position selects an industry application indicator through `ApplicationIndicator`. Pass the data with the `0x1D` separators already in place and turn FNC1 on with `qr::Encoder::fnc1`:
+
+```rust
+use qrcode_generator::qr::{Encoder, ErrorCorrection, Fnc1};
+
+// AI 01 is a GTIN, the 0x1D (GS) byte separates it, then AI 10 is a batch number.
+let symbol = Encoder::new(ErrorCorrection::Medium)
+    .fnc1(Some(Fnc1::Gs1))
+    .encode_bytes(b"0101234567890128\x1D10ABC")
+    .unwrap();
+```
 
 *Structured Append* spreads one message across up to 16 symbols that a reader stitches back together. You can supply the parts yourself, or let the encoder split a message automatically:
 
@@ -251,7 +263,7 @@ The optional `kanji` feature adds Kanji mode to automatic text segmentation and 
 - `rmqr` enables the Rectangular Micro QR Code encoder with all 32 versions.
 - `kanji` enables Shift JIS Kanji segments and automatic Kanji mode selection.
 - `url` implements `ToQRText` for `url::Url` and works with `no_std + alloc`.
-- `async-write` (requires `std`) enables the runtime-independent asynchronous writer methods.
+- `tokio` (requires `std`) enables the tokio asynchronous writer and atomic file-save methods.
 
 ## Crates.io
 

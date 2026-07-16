@@ -1,7 +1,5 @@
 use alloc::{string::String, vec, vec::Vec};
 use core::fmt;
-#[cfg(feature = "async-write")]
-use std::{future::poll_fn, io::ErrorKind, pin::Pin};
 #[cfg(feature = "std")]
 use std::{
     io::{self, Write as IoWrite},
@@ -15,9 +13,9 @@ use image::{
     ColorType, ImageBuffer, ImageEncoder, Luma,
     codecs::png::{CompressionType, FilterType, PngEncoder},
 };
+#[cfg(feature = "tokio")]
+use tokio::io::{AsyncWrite as TokioAsyncWrite, AsyncWriteExt};
 
-#[cfg(feature = "async-write")]
-use crate::AsyncWrite;
 use crate::{RenderError, Symbol, SymbolVersion};
 
 /// Renders an encoded symbol at exact output dimensions.
@@ -194,19 +192,20 @@ impl<'a> Renderer<'a> {
         writer.write_str("\"/>\n</svg>")
     }
 
-    #[cfg(feature = "async-write")]
-    /// Renders an SVG document in memory, then writes and flushes it asynchronously.
+    #[cfg(feature = "tokio")]
+    /// Renders an SVG document in memory, then writes and flushes it to a tokio asynchronous writer.
     ///
     /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
     /// Pass `None::<&str>` when no description is needed.
-    pub async fn write_svg_async<W: AsyncWrite + Unpin>(
+    pub async fn write_svg_async<W: TokioAsyncWrite + Unpin>(
         self,
         mut writer: W,
         description: Option<impl AsRef<str>>,
     ) -> Result<(), RenderError> {
         let svg = self.to_svg_string(description)?;
 
-        write_all_async(&mut writer, svg.as_bytes()).await?;
+        writer.write_all(svg.as_bytes()).await?;
+        writer.flush().await?;
 
         Ok(())
     }
@@ -228,6 +227,22 @@ impl<'a> Renderer<'a> {
         file.commit()?;
 
         Ok(())
+    }
+
+    #[cfg(feature = "tokio")]
+    /// Atomically saves an SVG document after rendering succeeds, offloading the write to tokio's blocking pool.
+    ///
+    /// Like [`save_svg`](Self::save_svg), the write goes through a temporary file, so an existing file is left untouched if it fails.
+    /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
+    /// Pass `None::<&str>` when no description is needed.
+    pub async fn save_svg_async(
+        self,
+        path: impl AsRef<Path>,
+        description: Option<impl AsRef<str>>,
+    ) -> Result<(), RenderError> {
+        let svg = self.to_svg_string(description)?;
+
+        save_atomic_blocking(path.as_ref().to_path_buf(), svg.into_bytes()).await
     }
 
     #[cfg(feature = "image")]
@@ -254,15 +269,16 @@ impl<'a> Renderer<'a> {
         Ok(bytes)
     }
 
-    #[cfg(all(feature = "async-write", feature = "image"))]
-    /// Renders a PNG image in memory, then writes and flushes it asynchronously.
-    pub async fn write_png_async<W: AsyncWrite + Unpin>(
+    #[cfg(all(feature = "tokio", feature = "image"))]
+    /// Renders a PNG image in memory, then writes and flushes it to a tokio asynchronous writer.
+    pub async fn write_png_async<W: TokioAsyncWrite + Unpin>(
         self,
         mut writer: W,
     ) -> Result<(), RenderError> {
         let png = self.to_png_vec()?;
 
-        write_all_async(&mut writer, &png).await?;
+        writer.write_all(&png).await?;
+        writer.flush().await?;
 
         Ok(())
     }
@@ -277,6 +293,16 @@ impl<'a> Renderer<'a> {
         file.commit()?;
 
         Ok(())
+    }
+
+    #[cfg(all(feature = "tokio", feature = "image"))]
+    /// Atomically saves a PNG image after rendering succeeds, offloading the write to tokio's blocking pool.
+    ///
+    /// Like [`save_png`](Self::save_png), the write goes through a temporary file, so an existing file is left untouched if it fails.
+    pub async fn save_png_async(self, path: impl AsRef<Path>) -> Result<(), RenderError> {
+        let png = self.to_png_vec()?;
+
+        save_atomic_blocking(path.as_ref().to_path_buf(), png).await
     }
 
     #[cfg(feature = "image")]
@@ -341,22 +367,22 @@ impl<W: IoWrite> fmt::Write for IoFmtWriter<W> {
     }
 }
 
-#[cfg(feature = "async-write")]
-async fn write_all_async<W: AsyncWrite + Unpin>(
-    writer: &mut W,
-    mut bytes: &[u8],
-) -> io::Result<()> {
-    while !bytes.is_empty() {
-        let written = poll_fn(|context| Pin::new(&mut *writer).poll_write(context, bytes)).await?;
+// atomic-write-file has no async backend, so the atomic save runs on tokio's blocking pool.
+#[cfg(feature = "tokio")]
+async fn save_atomic_blocking(path: std::path::PathBuf, bytes: Vec<u8>) -> Result<(), RenderError> {
+    let write = tokio::task::spawn_blocking(move || {
+        let mut file = AtomicWriteFile::open(path)?;
 
-        if written == 0 {
-            return Err(io::Error::new(ErrorKind::WriteZero, "failed to write rendered output"));
-        }
+        file.write_all(&bytes)?;
 
-        bytes = &bytes[written..];
+        file.commit()
+    })
+    .await;
+
+    match write {
+        Ok(result) => result.map_err(RenderError::from),
+        Err(join_error) => Err(RenderError::Io(io::Error::other(join_error))),
     }
-
-    poll_fn(|context| Pin::new(&mut *writer).poll_flush(context)).await
 }
 
 struct Layout {

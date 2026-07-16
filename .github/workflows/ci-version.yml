@@ -26,7 +26,7 @@ jobs:
           - --features rmqr
           - --features url
           - --features kanji
-          - --features async-write
+          - --features tokio
           - --no-default-features
           - --no-default-features --features qr
           - --no-default-features --features micro-qr
@@ -60,7 +60,7 @@ jobs:
           - --features rmqr
           - --features url
           - --features kanji
-          - --features async-write
+          - --features tokio
           - --no-default-features
           - --no-default-features --features qr
           - --no-default-features --features micro-qr

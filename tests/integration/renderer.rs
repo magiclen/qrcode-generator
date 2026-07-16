@@ -165,38 +165,40 @@ fn save_apis_write_to_temporary_paths() {
     }
 }
 
-// The asynchronous writers produce the same bytes as their in-memory counterparts.
-#[cfg(feature = "async-write")]
-#[test]
-fn asynchronous_writers_match_memory_rendering() {
-    use std::{
-        future::Future,
-        task::{Context, Poll, Waker},
-    };
-
-    fn run_ready<F: Future>(future: F) -> F::Output {
-        let mut future = std::pin::pin!(future);
-        let mut context = Context::from_waker(Waker::noop());
-
-        match future.as_mut().poll(&mut context) {
-            Poll::Ready(output) => output,
-            Poll::Pending => panic!("the in-memory writer should be ready"),
-        }
-    }
-
+// The tokio writers and save APIs produce the same bytes as their in-memory and synchronous counterparts.
+#[cfg(feature = "tokio")]
+#[tokio::test]
+async fn tokio_writers_and_savers_match_the_synchronous_apis() {
     let symbol = symbol();
     let renderer = Renderer::new_with_dimensions(&symbol, 256, 128);
     let svg = renderer.to_svg_string(Some("async")).unwrap();
-    let mut async_svg = Vec::new();
 
-    run_ready(renderer.write_svg_async(&mut async_svg, Some(String::from("async")))).unwrap();
+    let mut async_svg = Vec::new();
+    renderer.write_svg_async(&mut async_svg, Some(String::from("async"))).await.unwrap();
     assert_eq!(async_svg, svg.as_bytes());
+
+    let base = std::env::temp_dir().join(format!(
+        "qrcode-generator-tokio-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+
+    let svg_path = base.with_extension("svg");
+    renderer.save_svg_async(&svg_path, Some("async")).await.unwrap();
+    assert_eq!(std::fs::read(&svg_path).unwrap(), svg.as_bytes());
+    std::fs::remove_file(svg_path).unwrap();
 
     #[cfg(feature = "image")]
     {
         let png = renderer.to_png_vec().unwrap();
+
         let mut async_png = Vec::new();
-        run_ready(renderer.write_png_async(&mut async_png)).unwrap();
+        renderer.write_png_async(&mut async_png).await.unwrap();
         assert_eq!(async_png, png);
+
+        let png_path = base.with_extension("png");
+        renderer.save_png_async(&png_path).await.unwrap();
+        assert_eq!(std::fs::read(&png_path).unwrap(), png);
+        std::fs::remove_file(png_path).unwrap();
     }
 }
