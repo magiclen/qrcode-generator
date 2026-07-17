@@ -69,18 +69,35 @@ impl<'a> Renderer<'a> {
         let mut image = vec![255; length];
 
         for y in 0..self.symbol.height() {
-            let output_y = layout.margin_y + y * layout.scale;
+            let first_row = layout.margin_y + y * layout.scale;
+            let row_start = first_row * self.width;
 
-            for x in 0..self.symbol.width() {
-                if self.symbol.module(x, y) == Some(true) {
-                    let output_x = layout.margin_x + x * layout.scale;
+            // Each horizontal run of dark modules is drawn once into the first pixel row.
+            let mut x = 0;
 
-                    for row in output_y..output_y + layout.scale {
-                        image[row * self.width + output_x
-                            ..row * self.width + output_x + layout.scale]
-                            .fill(0);
-                    }
+            while x < self.symbol.width() {
+                if self.symbol.module(x, y) != Some(true) {
+                    x += 1;
+                    continue;
                 }
+
+                let start = x;
+
+                while x < self.symbol.width() && self.symbol.module(x, y) == Some(true) {
+                    x += 1;
+                }
+
+                let output_x = layout.margin_x + start * layout.scale;
+
+                image[row_start + output_x..row_start + output_x + (x - start) * layout.scale]
+                    .fill(0);
+            }
+
+            // The finished pixel row is copied to the remaining rows of this module row.
+            for row in 1..layout.scale {
+                let destination = (first_row + row) * self.width;
+
+                image.copy_within(row_start..row_start + self.width, destination);
             }
         }
 

@@ -707,7 +707,7 @@ impl Matrix {
 }
 
 #[inline]
-fn alignment_centers(width: usize) -> &'static [usize] {
+const fn alignment_centers(width: usize) -> &'static [usize] {
     match width {
         27 => &[],
         43 => &[21],
@@ -715,10 +715,11 @@ fn alignment_centers(width: usize) -> &'static [usize] {
         77 => &[25, 51],
         99 => &[23, 49, 75],
         139 => &[27, 55, 83, 111],
-        _ => unreachable!("rMQR width is validated by RmqrVersion"),
+        _ => panic!("rMQR width is validated by RmqrVersion"),
     }
 }
 
+#[inline]
 fn finder_format_coordinates() -> impl Iterator<Item = (usize, usize)> {
     (0..18).map(|index| match index {
         0..=4 => (8, index + 1),
@@ -728,6 +729,7 @@ fn finder_format_coordinates() -> impl Iterator<Item = (usize, usize)> {
     })
 }
 
+#[inline]
 fn sub_format_coordinates(width: usize, height: usize) -> impl Iterator<Item = (usize, usize)> {
     let anchor_x = width - 8;
     let anchor_y = height - 6;
@@ -740,13 +742,17 @@ fn sub_format_coordinates(width: usize, height: usize) -> impl Iterator<Item = (
     })
 }
 
-fn format_code(data: u32) -> u32 {
+#[inline]
+const fn format_code(data: u32) -> u32 {
     let mut value = data << 12;
+    let mut bit = 17;
 
-    for bit in (12..=17).rev() {
+    while bit >= 12 {
         if value >> bit & 1 != 0 {
             value ^= 0x1F25 << (bit - 12);
         }
+
+        bit -= 1;
     }
 
     data << 12 | value

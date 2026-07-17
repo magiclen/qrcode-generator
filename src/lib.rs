@@ -307,7 +307,7 @@ Automatic splitting first minimizes the number of symbols, then their largest ve
 
 ## Kanji
 
-The optional `kanji` feature adds Kanji mode to automatic text segmentation and exposes `Segment::kanji`. It is off by default for the widest scanner compatibility.
+The optional `kanji` feature adds full Shift JIS support to automatic text segmentation and exposes `Segment::kanji`. Eligible characters use the compact 13-bit Kanji mode, and other Shift JIS text such as half-width katakana can be stored as Shift JIS bytes behind an ECI 000020 header. Following the strict ECI rules of ISO/IEC 18004, Kanji mode is only used while the default interpretation or an explicit Shift JIS ECI is in force, so inputs mixing UTF-8 and Kanji data stay readable for strict ECI decoders. The feature is off by default for the widest scanner compatibility.
 
 ## Cargo features
 

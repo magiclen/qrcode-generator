@@ -146,6 +146,7 @@ impl Error for RenderError {
 
 #[cfg(feature = "std")]
 impl From<io::Error> for RenderError {
+    #[inline]
     fn from(error: io::Error) -> Self {
         Self::Io(error)
     }
@@ -153,6 +154,7 @@ impl From<io::Error> for RenderError {
 
 #[cfg(feature = "image")]
 impl From<image::ImageError> for RenderError {
+    #[inline]
     fn from(error: image::ImageError) -> Self {
         Self::Image(error)
     }

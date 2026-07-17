@@ -196,6 +196,34 @@ fn kanji_mode_round_trips() {
     assert_eq!(decode_model2(image, size).getText(), text);
 }
 
+// Text mixing UTF-8 and Shift JIS data declares each interpretation explicitly and still decodes.
+#[cfg(feature = "kanji")]
+#[test]
+fn mixed_utf8_and_kanji_text_round_trips() {
+    let text = "😀日本語のテスト ﾃｽﾄ ¥100";
+    let symbol = Encoder::new(ErrorCorrection::Medium).encode_text(text).unwrap();
+    let (image, size) = render_square(&symbol, 8);
+
+    assert_eq!(decode_square(image, size), text);
+}
+
+// A pure Kanji Structured Append sequence keeps Kanji mode and reassembles to the whole message.
+#[cfg(feature = "kanji")]
+#[test]
+fn structured_append_kanji_parts_round_trip() {
+    let parts = ["日本語構造的連接", "試験一二三四五"];
+    let symbols =
+        Encoder::new(ErrorCorrection::Medium).encode_structured_append_text(&parts).unwrap();
+    let parity = symbols[0].structured_append().unwrap().parity();
+
+    for (symbol, expected) in symbols.iter().zip(parts) {
+        assert_eq!(symbol.structured_append().unwrap().parity(), parity);
+
+        let (image, size) = render_square(symbol, 8);
+        assert_eq!(decode_square(image, size), expected);
+    }
+}
+
 // A Structured Append sequence shares one parity byte and reassembles to the whole message.
 #[test]
 fn structured_append_metadata_and_payloads_round_trip() {

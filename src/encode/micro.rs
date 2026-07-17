@@ -464,6 +464,7 @@ struct Capacity {
     ecc_codewords: usize,
 }
 
+#[inline]
 const fn capacity(
     version: MicroVersion,
     error_correction: MicroErrorCorrection,
@@ -485,12 +486,17 @@ const fn capacity(
     })
 }
 
-pub(crate) fn input_capacity_upper_bound(
+#[inline]
+pub(crate) const fn input_capacity_upper_bound(
     version: MicroVersion,
     error_correction: MicroErrorCorrection,
 ) -> Option<(usize, usize)> {
-    let capacity = capacity(version, error_correction)?;
-    let (indicator_bits, cci_bits) = mode_parameters(version, Mode::Numeric)?;
+    let Some(capacity) = capacity(version, error_correction) else {
+        return None;
+    };
+    let Some((indicator_bits, cci_bits)) = mode_parameters(version, Mode::Numeric) else {
+        return None;
+    };
     let overhead_bits = indicator_bits as usize + cci_bits as usize;
 
     Some((super::numeric_character_capacity(capacity.data_bits, overhead_bits), capacity.data_bits))

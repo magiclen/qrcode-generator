@@ -201,6 +201,17 @@ fn kanji_mode_round_trips() {
     assert_eq!(decode_rmqr_pure(image, width, height, "Kanji").getText(), text);
 }
 
+// Text mixing UTF-8 and Shift JIS data declares each interpretation explicitly and still decodes.
+#[cfg(feature = "kanji")]
+#[test]
+fn mixed_utf8_and_kanji_text_round_trips() {
+    let text = "😀日本語テスト";
+    let symbol = Encoder::new(ErrorCorrection::Medium).encode_text(text).unwrap();
+    let (image, width, height) = render_rmqr(&symbol, 8);
+
+    assert_eq!(decode_rmqr_pure(image, width, height, "mixed UTF-8 and Kanji").getText(), text);
+}
+
 // Owned and borrowed inputs produce identical symbols, confirming the generic argument bounds.
 #[test]
 fn public_inputs_accept_owned_and_borrowed_forms_without_changing_symbols() {

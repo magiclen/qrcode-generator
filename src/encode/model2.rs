@@ -102,11 +102,13 @@ pub(crate) fn encode(
         // Format bits are redrawn for every candidate because they are part of the penalty score.
         let mut best_mask = 0;
         let mut best_penalty = i32::MAX;
+        // The column buffer is shared by all mask candidates to avoid one allocation per candidate.
+        let mut column = Vec::with_capacity(matrix.size);
 
         for candidate in 0..8 {
             matrix.apply_mask(candidate);
             matrix.draw_format(candidate);
-            let penalty = matrix.penalty();
+            let penalty = matrix.penalty(&mut column);
             if penalty < best_penalty {
                 best_mask = candidate;
                 best_penalty = penalty;
@@ -439,20 +441,17 @@ impl Matrix {
         }
     }
 
-    fn penalty(&self) -> i32 {
+    fn penalty(&self, column: &mut Vec<bool>) -> i32 {
         let mut score = 0;
 
         for y in 0..self.size {
             score += line_penalty(&self.modules[y * self.size..][..self.size]);
         }
 
-        // The reused column buffer avoids one allocation per strided column line.
-        let mut column = Vec::with_capacity(self.size);
-
         for x in 0..self.size {
             column.clear();
             column.extend((0..self.size).map(|y| self.modules[y * self.size + x]));
-            score += line_penalty(&column);
+            score += line_penalty(column);
         }
 
         for y in 0..self.size - 1 {
@@ -481,50 +480,72 @@ impl Matrix {
     }
 }
 
-fn format_bits(error_correction: QrErrorCorrection, mask: u8) -> u32 {
-    let data = u32::from(error_correction.qr_format_bits() << 3 | mask);
+#[inline]
+const fn format_bits(error_correction: QrErrorCorrection, mask: u8) -> u32 {
+    let data = (error_correction.qr_format_bits() << 3 | mask) as u32;
     let mut remainder = data;
+    let mut round = 0;
 
-    for _ in 0..10 {
+    while round < 10 {
         remainder = (remainder << 1) ^ ((remainder >> 9) * 0x537);
+        round += 1;
     }
 
     (data << 10 | remainder) ^ 0x5412
 }
 
-fn version_bits(version: QrVersion) -> u32 {
-    let data = u32::from(version.value());
+#[inline]
+const fn version_bits(version: QrVersion) -> u32 {
+    let data = version.value() as u32;
     let mut remainder = data;
+    let mut round = 0;
 
-    for _ in 0..12 {
+    while round < 12 {
         remainder = (remainder << 1) ^ ((remainder >> 11) * 0x1F25);
+        round += 1;
     }
 
     data << 12 | remainder
 }
 
 fn line_penalty(values: &[bool]) -> i32 {
+    // The 1:1:3:1:1 finder-like pattern scores on each side with a light area of four modules.
+    // The rolling window carries four virtual light modules on each end, standing in for the quiet zone.
+    const LEFT_LIGHT_PATTERN: u16 = 0b00001011101;
+    const RIGHT_LIGHT_PATTERN: u16 = 0b10111010000;
+
     let mut score = 0;
     let mut run = 1;
+    let mut window = 0u16;
 
-    for index in 1..values.len() {
-        if values[index] == values[index - 1] {
-            run += 1;
-            if run == 5 {
-                score += PENALTY_N1;
-            } else if run > 5 {
-                score += 1;
+    // The N1 run scoring and the N3 window scan share one pass over the line.
+    for index in 0..values.len() + 4 {
+        let bit = index < values.len() && values[index];
+
+        if index >= 1 && index < values.len() {
+            if values[index] == values[index - 1] {
+                run += 1;
+                if run == 5 {
+                    score += PENALTY_N1;
+                } else if run > 5 {
+                    score += 1;
+                }
+            } else {
+                run = 1;
             }
-        } else {
-            run = 1;
         }
-    }
 
-    for window in values.windows(11) {
-        if window == [true, false, true, true, true, false, true, false, false, false, false]
-            || window == [false, false, false, false, true, false, true, true, true, false, true]
-        {
-            score += PENALTY_N3;
+        window = (window << 1 | u16::from(bit)) & 0x7FF;
+
+        // The first full window ends at index 6 because of the four virtual leading light modules.
+        if index >= 6 {
+            if window == LEFT_LIGHT_PATTERN {
+                score += PENALTY_N3;
+            }
+
+            if window == RIGHT_LIGHT_PATTERN {
+                score += PENALTY_N3;
+            }
         }
     }
     score
@@ -532,7 +553,8 @@ fn line_penalty(values: &[bool]) -> i32 {
 
 // The 45% and 55% dark ratios stay in the zero-penalty band, matching an inclusive reading of NOTE 4.
 // A real symbol has an odd module count, so its dark ratio never lands on those endpoints exactly.
-fn n4_penalty(dark: usize, total: usize) -> i32 {
+#[inline]
+const fn n4_penalty(dark: usize, total: usize) -> i32 {
     let dark = dark as i32;
     let total = total as i32;
     let deviation = ((dark * 20 - total * 10).abs() + total - 1) / total - 1;

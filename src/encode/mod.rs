@@ -24,6 +24,7 @@ use bits::BitBuffer;
 use crate::EncodeError;
 
 #[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
+#[inline]
 const fn numeric_character_capacity(capacity_bits: usize, overhead_bits: usize) -> usize {
     let payload_bits = capacity_bits.saturating_sub(overhead_bits);
 
@@ -36,7 +37,8 @@ const fn numeric_character_capacity(capacity_bits: usize, overhead_bits: usize) 
 }
 
 #[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
-fn ensure_input_length(
+#[inline]
+const fn ensure_input_length(
     length: usize,
     per_symbol_capacity: usize,
     capacity_bits: usize,
@@ -512,6 +514,8 @@ pub struct EciAssignment(u32);
 impl EciAssignment {
     /// The default ISO-8859-1 character set assignment.
     pub const ISO_8859_1: Self = Self(3);
+    /// The Shift JIS character set assignment.
+    pub const SHIFT_JIS: Self = Self(20);
     /// The UTF-8 character set assignment.
     pub const UTF_8: Self = Self(26);
 
@@ -760,17 +764,12 @@ impl Segment {
     /// Creates a Byte segment without adding an ECI header.
     pub fn bytes(data: impl AsRef<[u8]>) -> Self {
         let data = data.as_ref();
-        let mut bits = BitBuffer::with_capacity(data.len() * 8);
-
-        for &byte in data {
-            bits.append(u32::from(byte), 8);
-        }
 
         Self {
-            mode: Mode::Byte,
+            mode:            Mode::Byte,
             character_count: data.len(),
-            bits,
-            source: data.to_vec(),
+            bits:            BitBuffer::from_bytes(data.to_vec()),
+            source:          data.to_vec(),
         }
     }
 
@@ -1371,12 +1370,6 @@ impl QrEncoder {
         range: RangeInclusive<QrVersion>,
     ) -> Result<Vec<(usize, usize)>, EncodeError> {
         let maximum_version = *range.end();
-        let mut probe = self.clone();
-
-        probe.versions = range;
-        // Probing only checks whether the data fits, so a fixed mask skips the mask penalty search.
-        probe.mask = Some(QrMask(0));
-
         let mut result = Vec::new();
         let mut start = 0;
 
@@ -1399,11 +1392,8 @@ impl QrEncoder {
 
             while low <= high {
                 let middle = low + (high - low) / 2;
-                let header = StructuredAppendInfo {
-                    index: 0, total: 16, parity: 0
-                };
 
-                if probe.encode_optimized_bytes(&data[start..middle], Some(header)).is_ok() {
+                if self.bytes_fit(&data[start..middle], range.clone()) {
                     fitting = Some(middle);
                     low = middle + 1;
                 } else {
@@ -1430,11 +1420,6 @@ impl QrEncoder {
     ) -> Result<Vec<(usize, usize)>, EncodeError> {
         let maximum_version = *range.end();
         let force_initial_eci = requires_non_default_eci(text);
-        let mut probe = self.clone();
-
-        probe.versions = range;
-        // Probing only checks whether the data fits, so a fixed mask skips the mask penalty search.
-        probe.mask = Some(QrMask(0));
 
         let mut result = Vec::new();
         let mut start = 0;
@@ -1459,18 +1444,11 @@ impl QrEncoder {
             while low <= high {
                 let middle = low + (high - low) / 2;
 
-                let header = StructuredAppendInfo {
-                    index: 0, total: 16, parity: 0
-                };
-
-                if probe
-                    .encode_optimized_text(
-                        &text[offsets[start]..offsets[middle]],
-                        Some(header),
-                        force_initial_eci,
-                    )
-                    .is_ok()
-                {
+                if self.text_fits(
+                    &text[offsets[start]..offsets[middle]],
+                    range.clone(),
+                    force_initial_eci,
+                ) {
                     fitting = Some(middle);
                     low = middle + 1;
                 } else {
@@ -1497,20 +1475,10 @@ impl QrEncoder {
         range: RangeInclusive<QrVersion>,
     ) -> Result<Vec<(usize, usize)>, EncodeError> {
         minimum_area_partition(data.len(), part_count, range, |start, version| {
-            let mut probe = self.clone();
-
-            probe.versions = version..=version;
-            // Probing only checks whether the data fits, so a fixed mask skips the mask penalty search.
-            probe.mask = Some(QrMask(0));
-
             let high = data.len().min(start.saturating_add(self.qr_character_upper_bound(version)));
 
             maximum_fitting_end(high, start, |end| {
-                let header = StructuredAppendInfo {
-                    index: 0, total: 16, parity: 0
-                };
-
-                probe.encode_optimized_bytes(&data[start..end], Some(header)).is_ok()
+                self.bytes_fit(&data[start..end], version..=version)
             })
         })
     }
@@ -1526,28 +1494,76 @@ impl QrEncoder {
         let force_initial_eci = requires_non_default_eci(text);
 
         minimum_area_partition(length, part_count, range, |start, version| {
-            let mut probe = self.clone();
-
-            probe.versions = version..=version;
-            // Probing only checks whether the data fits, so a fixed mask skips the mask penalty search.
-            probe.mask = Some(QrMask(0));
-
             let high = length.min(start.saturating_add(self.qr_character_upper_bound(version)));
 
             maximum_fitting_end(high, start, |end| {
-                let header = StructuredAppendInfo {
-                    index: 0, total: 16, parity: 0
-                };
-
-                probe
-                    .encode_optimized_text(
-                        &text[offsets[start]..offsets[end]],
-                        Some(header),
-                        force_initial_eci,
-                    )
-                    .is_ok()
+                self.text_fits(
+                    &text[offsets[start]..offsets[end]],
+                    version..=version,
+                    force_initial_eci,
+                )
             })
         })
+    }
+
+    // Reports whether the bytes fit some version in the range as one Structured Append part.
+    fn bytes_fit(&self, data: &[u8], range: RangeInclusive<QrVersion>) -> bool {
+        self.qr_range_fits(range, |version| {
+            optimizer::bytes(data, optimizer::Profile::qr(version), self.fnc1.is_some())
+        })
+    }
+
+    // Reports whether the text fits some version in the range as one Structured Append part.
+    fn text_fits(
+        &self,
+        text: &str,
+        range: RangeInclusive<QrVersion>,
+        force_initial_eci: bool,
+    ) -> bool {
+        self.qr_range_fits(range, |version| {
+            optimizer::text(
+                text,
+                optimizer::Profile::qr(version),
+                self.fnc1.is_some(),
+                force_initial_eci,
+            )
+        })
+    }
+
+    // Runs the fit check without drawing a symbol, so probing skips the matrix and mask work.
+    fn qr_range_fits<F>(&self, range: RangeInclusive<QrVersion>, mut segments: F) -> bool
+    where
+        F: FnMut(QrVersion) -> Result<Vec<Segment>, EncodeError>, {
+        if range.start() > range.end() {
+            return false;
+        }
+
+        // Only the presence of the header matters for the fit check, so the values are placeholders.
+        let header = StructuredAppendInfo {
+            index: 0, total: 16, parity: 0
+        };
+        let mut cache: [Option<Vec<Segment>>; 3] = [None, None, None];
+
+        for value in range.start().0..=range.end().0 {
+            let version = QrVersion(value);
+            let group = version_group(version);
+
+            if cache[group].is_none() {
+                let Ok(candidate) = segments(version) else {
+                    return false;
+                };
+
+                cache[group] = Some(candidate);
+            }
+
+            let candidate = cache[group].as_deref().expect("the version group is cached");
+
+            if model2::fits(candidate, version, self.error_correction, self.fnc1, Some(header)) {
+                return true;
+            }
+        }
+
+        false
     }
 
     #[inline]
@@ -1601,6 +1617,7 @@ impl QrEncoder {
 
         // Character count indicator widths change only at versions 10 and 27.
         let mut cache: [Option<Vec<Segment>>; 3] = [None, None, None];
+        let mut last_error = None;
 
         for value in range.start().0..=range.end().0 {
             let version = QrVersion(value);
@@ -1612,7 +1629,7 @@ impl QrEncoder {
 
             let candidate = cache[group].as_deref().expect("the version group is cached");
 
-            if let Ok(symbol) = model2::encode(
+            match model2::encode(
                 candidate,
                 version,
                 self.error_correction,
@@ -1621,26 +1638,13 @@ impl QrEncoder {
                 self.fnc1,
                 structured_append,
             ) {
-                return Ok(symbol);
+                Ok(symbol) => return Ok(symbol),
+                Err(error) => last_error = Some(error),
             }
         }
-        let group = version_group(*range.end());
 
-        if cache[group].is_none() {
-            cache[group] = Some(segments(*range.end())?);
-        }
-
-        let candidate = cache[group].as_deref().expect("the final version group is cached");
-
-        model2::encode(
-            candidate,
-            *range.end(),
-            self.error_correction,
-            self.mask,
-            self.boost_error_correction,
-            self.fnc1,
-            structured_append,
-        )
+        // The version range is verified to be non-empty, so at least one error was stored.
+        Err(last_error.unwrap_or(EncodeError::InvalidVersionRange))
     }
 
     fn encode_segments_with_header(
@@ -1816,17 +1820,16 @@ impl RmqrEncoder {
 
         for version in versions {
             let profile = rmqr::cci(version);
-            let segments =
-                if let Some((_, segments)) = cache.iter().find(|(cci, _)| *cci == profile) {
-                    segments.clone()
-                } else {
-                    let segments = optimize(version)?;
-                    cache.push((profile, segments.clone()));
-                    segments
-                };
+            let index = match cache.iter().position(|(cci, _)| *cci == profile) {
+                Some(index) => index,
+                None => {
+                    cache.push((profile, optimize(version)?));
+                    cache.len() - 1
+                },
+            };
 
             match rmqr::encode(
-                &segments,
+                &cache[index].1,
                 version,
                 self.error_correction,
                 self.boost_error_correction,
@@ -2250,6 +2253,7 @@ fn text_boundaries(text: &str) -> Vec<usize> {
 }
 
 #[cfg(feature = "qr")]
+#[inline]
 fn requires_non_default_eci(text: &str) -> bool {
     text.chars().any(|character| u32::from(character) > 0xFF)
 }
