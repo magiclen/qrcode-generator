@@ -10,7 +10,7 @@ keywords = ["qrcode", "micro-qr", "rmqr", "png", "svg"]
 categories = ["encoding", "multimedia::images"]
 description = "Generate QR Code matrices and images in RAW, PNG and SVG formats."
 license = "MIT"
-include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
+include = ["src/**/*", "!src/**/*_tests.rs", "Cargo.toml", "README.md", "LICENSE"]
 
 [dependencies]
 atomic-write-file = { version = "0.3", optional = true }
