@@ -330,7 +330,7 @@ pub(crate) fn encode(
 
     if used_bits > capacity_bits {
         return Err(EncodeError::DataTooLong {
-            required_bits: used_bits,
+            required_bits: Some(used_bits),
             capacity_bits,
         });
     }
@@ -422,14 +422,14 @@ fn total_bits(
 
         if segment.mode != Mode::Eci && segment.character_count >= 1usize << count_bits {
             return Err(EncodeError::DataTooLong {
-                required_bits: usize::MAX,
+                required_bits: None,
                 capacity_bits: data_codewords(version, error_correction) * 8,
             });
         }
 
         result = result.checked_add(3 + usize::from(count_bits) + segment.bits.len()).ok_or(
             EncodeError::DataTooLong {
-                required_bits: usize::MAX,
+                required_bits: None,
                 capacity_bits: data_codewords(version, error_correction) * 8,
             },
         )?;

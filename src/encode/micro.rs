@@ -4,7 +4,7 @@ use alloc::{vec, vec::Vec};
 use super::kanji_encoding;
 use super::{
     MicroErrorCorrection, MicroMask, MicroVersion, Mode, Segment, Symbol, SymbolVersion,
-    alphanumeric_value, bits::BitBuffer, reed_solomon,
+    alphanumeric_value, bits::BitBuffer, mode_rank, reed_solomon,
 };
 use crate::EncodeError;
 
@@ -248,7 +248,7 @@ pub(crate) fn encode(
 
     if used_bits > capacity_info.data_bits {
         return Err(EncodeError::DataTooLong {
-            required_bits: used_bits,
+            required_bits: Some(used_bits),
             capacity_bits: capacity_info.data_bits,
         });
     }
@@ -374,13 +374,13 @@ fn total_bits(segments: &[Segment], version: MicroVersion) -> Result<usize, Enco
 
         if segment.character_count >= 1usize << cci {
             return Err(EncodeError::DataTooLong {
-                required_bits: usize::MAX, capacity_bits: 0
+                required_bits: None, capacity_bits: 0
             });
         }
 
         result = result.checked_add(indicator as usize + cci as usize + segment.bits.len()).ok_or(
             EncodeError::DataTooLong {
-                required_bits: usize::MAX, capacity_bits: 0
+                required_bits: None, capacity_bits: 0
             },
         )?;
     }
@@ -433,17 +433,6 @@ const fn mode_indicator(version: MicroVersion, mode: Mode) -> u32 {
         (MicroVersion::M3, Mode::Byte) | (MicroVersion::M4, Mode::Byte) => 2,
         (MicroVersion::M3, Mode::Kanji) | (MicroVersion::M4, Mode::Kanji) => 3,
         _ => unreachable!(),
-    }
-}
-
-#[inline]
-const fn mode_rank(mode: Mode) -> u8 {
-    match mode {
-        Mode::Numeric => 0,
-        Mode::Alphanumeric => 1,
-        Mode::Kanji => 2,
-        Mode::Byte => 3,
-        Mode::Eci => 4,
     }
 }
 

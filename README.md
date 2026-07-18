@@ -42,7 +42,7 @@ Every workflow has two steps. An `Encoder` (from the `qr`, `micro` or `rmqr` mod
 A few QR Code words appear throughout this documentation:
 
 - **Module** — the smallest square of a QR Code, the equivalent of one pixel. A dark module is `true` in the matrix.
-- **Matrix** — the full grid of modules. `Symbol::to_matrix` returns it as `Vec<Vec<bool>>`.
+- **Matrix** — the full grid of modules. `Symbol::to_matrix` returns it as `Vec<Vec<bool>>`, and `Symbol::modules` exposes it as one flat row-major slice without copying.
 - **Symbol** — one complete QR Code, Micro QR Code or rMQR symbol.
 - **Version** — the symbol size. QR Code versions run from 1 (21×21 modules) to 40 (177×177), Micro QR Code has versions M1 to M4 (11×11 to 17×17), and rMQR has 32 rectangular sizes.
 - **Error correction level** — how much redundancy is added so a dirty or partly hidden symbol still scans. The Low, Medium, Quartile and High levels recover roughly 7%, 15%, 25% and 30% of the codewords, and a higher level is more robust but leaves less room for your own data.

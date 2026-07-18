@@ -10,10 +10,15 @@ use crate::{SymbolErrorCorrection, SymbolVersion};
 #[non_exhaustive]
 pub enum EncodeError {
     /// The encoded bit stream exceeds the selected symbol capacity.
-    DataTooLong { required_bits: usize, capacity_bits: usize },
+    DataTooLong {
+        /// The exact number of bits the encoded data needs, or `None` when the encoder rejected the input before measuring it, for example from a capacity precheck or a character count over the indicator limit.
+        required_bits: Option<usize>,
+        /// The number of data bits the selected symbols hold.
+        capacity_bits: usize,
+    },
     /// The input contains a byte that is not valid for the requested mode.
     InvalidData { mode: &'static str, byte_offset: usize },
-    /// The text cannot be represented by the selected symbol family.
+    /// The input cannot be represented by the selected symbol family.
     #[cfg(feature = "micro-qr")]
     TextNotRepresentable { byte_offset: usize, family: &'static str },
     /// The ECI assignment is outside the range supported by QR Code.
@@ -47,15 +52,14 @@ impl fmt::Display for EncodeError {
                 required_bits,
                 capacity_bits,
             } => {
-                // A sentinel bit count means the exact size was not measured, so it is left out.
-                if *required_bits == usize::MAX {
-                    f.write_str("the encoded data exceeds the capacity of the selected symbols")
-                } else {
+                if let Some(required_bits) = required_bits {
                     write!(
                         f,
                         "the encoded data needs {required_bits} bits but the selected symbols \
                          hold {capacity_bits} bits"
                     )
+                } else {
+                    f.write_str("the encoded data exceeds the capacity of the selected symbols")
                 }
             },
             Self::InvalidData {
@@ -68,7 +72,12 @@ impl fmt::Display for EncodeError {
             Self::TextNotRepresentable {
                 byte_offset,
                 family,
-            } => write!(f, "text at byte offset {byte_offset} cannot be represented by {family}"),
+            } => {
+                write!(
+                    f,
+                    "the input at byte offset {byte_offset} cannot be represented by {family}"
+                )
+            },
             #[cfg(any(feature = "qr", feature = "rmqr"))]
             Self::InvalidEciAssignment(value) => {
                 write!(f, "ECI assignment {value} is outside 0..=999999")

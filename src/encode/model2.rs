@@ -25,7 +25,7 @@ pub(crate) fn encode(
 
     if used_bits > capacity_bits {
         return Err(EncodeError::DataTooLong {
-            required_bits: used_bits,
+            required_bits: Some(used_bits),
             capacity_bits,
         });
     }
@@ -99,21 +99,30 @@ pub(crate) fn encode(
     let mask = if let Some(mask) = requested_mask {
         mask.value()
     } else {
-        // Format bits are redrawn for every candidate because they are part of the penalty score.
+        // Each candidate is scored on a scratch copy, so no mask needs a second pass to be undone.
         let mut best_mask = 0;
         let mut best_penalty = i32::MAX;
         // The column buffer is shared by all mask candidates to avoid one allocation per candidate.
         let mut column = Vec::with_capacity(matrix.size);
+        let mut scratch = vec![false; matrix.modules.len()];
 
         for candidate in 0..8 {
-            matrix.apply_mask(candidate);
-            matrix.draw_format(candidate);
-            let penalty = matrix.penalty(&mut column);
+            scratch.copy_from_slice(&matrix.modules);
+            matrix.apply_mask_to(&mut scratch, candidate);
+
+            // Format bits are drawn for every candidate because they are part of the penalty score.
+            let bits = format_bits(matrix.error_correction, candidate);
+
+            each_format_module(matrix.size, bits, |x, y, value| {
+                scratch[y * matrix.size + x] = value;
+            });
+
+            let penalty = matrix.penalty(&scratch, &mut column);
+
             if penalty < best_penalty {
                 best_mask = candidate;
                 best_penalty = penalty;
             }
-            matrix.apply_mask(candidate);
         }
 
         best_mask
@@ -164,14 +173,14 @@ fn total_bits(
 
         if segment.mode != Mode::Eci && segment.character_count >= 1usize << cci {
             return Err(EncodeError::DataTooLong {
-                required_bits: usize::MAX,
+                required_bits: None,
                 capacity_bits: data_codewords(version, QrErrorCorrection::Low) * 8,
             });
         }
 
         result = result.checked_add(4 + usize::from(cci) + segment.bits.len()).ok_or(
             EncodeError::DataTooLong {
-                required_bits: usize::MAX, capacity_bits: 0
+                required_bits: None, capacity_bits: 0
             },
         )?;
     }
@@ -341,28 +350,9 @@ impl Matrix {
 
     fn draw_format(&mut self, mask: u8) {
         let bits = format_bits(self.error_correction, mask);
+        let size = self.size;
 
-        for index in 0..6 {
-            self.set_function(8, index, bit(bits, index));
-        }
-
-        self.set_function(8, 7, bit(bits, 6));
-        self.set_function(8, 8, bit(bits, 7));
-        self.set_function(7, 8, bit(bits, 8));
-
-        for index in 9..15 {
-            self.set_function(14 - index, 8, bit(bits, index));
-        }
-
-        for index in 0..8 {
-            self.set_function(self.size - 1 - index, 8, bit(bits, index));
-        }
-
-        for index in 8..15 {
-            self.set_function(8, self.size - 15 + index, bit(bits, index));
-        }
-
-        self.set_function(8, self.size - 8, true);
+        each_format_module(size, bits, |x, y, value| self.set_function(x, y, value));
     }
 
     fn draw_version(&mut self) {
@@ -418,55 +408,68 @@ impl Matrix {
     }
 
     fn apply_mask(&mut self, mask: u8) {
+        let mut modules = core::mem::take(&mut self.modules);
+
+        self.apply_mask_to(&mut modules, mask);
+        self.modules = modules;
+    }
+
+    fn apply_mask_to(&self, target: &mut [bool], mask: u8) {
+        match mask {
+            0 => self.invert_where(target, |x, y| (x + y) % 2 == 0),
+            1 => self.invert_where(target, |_, y| y % 2 == 0),
+            2 => self.invert_where(target, |x, _| x % 3 == 0),
+            3 => self.invert_where(target, |x, y| (x + y) % 3 == 0),
+            4 => self.invert_where(target, |x, y| (x / 3 + y / 2) % 2 == 0),
+            5 => self.invert_where(target, |x, y| x * y % 2 + x * y % 3 == 0),
+            6 => self.invert_where(target, |x, y| (x * y % 2 + x * y % 3) % 2 == 0),
+            7 => self.invert_where(target, |x, y| ((x + y) % 2 + x * y % 3) % 2 == 0),
+            _ => unreachable!(),
+        }
+    }
+
+    // Monomorphizing the predicate keeps the mask formula selection out of the per-module loop.
+    #[inline]
+    fn invert_where<F: Fn(usize, usize) -> bool>(&self, target: &mut [bool], invert: F) {
         for y in 0..self.size {
+            let row = y * self.size;
+
             for x in 0..self.size {
-                let invert = match mask {
-                    0 => (x + y) % 2 == 0,
-                    1 => y % 2 == 0,
-                    2 => x % 3 == 0,
-                    3 => (x + y) % 3 == 0,
-                    4 => (x / 3 + y / 2) % 2 == 0,
-                    5 => x * y % 2 + x * y % 3 == 0,
-                    6 => (x * y % 2 + x * y % 3) % 2 == 0,
-                    7 => ((x + y) % 2 + x * y % 3) % 2 == 0,
-                    _ => unreachable!(),
-                };
+                let index = row + x;
 
-                let index = y * self.size + x;
-
-                if invert && !self.function[index] {
-                    self.modules[index] = !self.modules[index];
+                if invert(x, y) && !self.function[index] {
+                    target[index] = !target[index];
                 }
             }
         }
     }
 
-    fn penalty(&self, column: &mut Vec<bool>) -> i32 {
+    fn penalty(&self, modules: &[bool], column: &mut Vec<bool>) -> i32 {
         let mut score = 0;
 
         for y in 0..self.size {
-            score += line_penalty(&self.modules[y * self.size..][..self.size]);
+            score += line_penalty(&modules[y * self.size..][..self.size]);
         }
 
         for x in 0..self.size {
             column.clear();
-            column.extend((0..self.size).map(|y| self.modules[y * self.size + x]));
+            column.extend((0..self.size).map(|y| modules[y * self.size + x]));
             score += line_penalty(column);
         }
 
         for y in 0..self.size - 1 {
             for x in 0..self.size - 1 {
-                let value = self.modules[y * self.size + x];
-                if value == self.modules[y * self.size + x + 1]
-                    && value == self.modules[(y + 1) * self.size + x]
-                    && value == self.modules[(y + 1) * self.size + x + 1]
+                let value = modules[y * self.size + x];
+                if value == modules[y * self.size + x + 1]
+                    && value == modules[(y + 1) * self.size + x]
+                    && value == modules[(y + 1) * self.size + x + 1]
                 {
                     score += PENALTY_N2;
                 }
             }
         }
 
-        let dark = self.modules.iter().filter(|&&value| value).count();
+        let dark = modules.iter().filter(|&&value| value).count();
 
         score + n4_penalty(dark, self.size * self.size)
     }
@@ -478,6 +481,31 @@ impl Matrix {
         self.modules[index] = value;
         self.function[index] = true;
     }
+}
+
+// Visits the module coordinates and bit values of both copies of the 15-bit format information.
+fn each_format_module(size: usize, bits: u32, mut set: impl FnMut(usize, usize, bool)) {
+    for index in 0..6 {
+        set(8, index, bit(bits, index));
+    }
+
+    set(8, 7, bit(bits, 6));
+    set(8, 8, bit(bits, 7));
+    set(7, 8, bit(bits, 8));
+
+    for index in 9..15 {
+        set(14 - index, 8, bit(bits, index));
+    }
+
+    for index in 0..8 {
+        set(size - 1 - index, 8, bit(bits, index));
+    }
+
+    for index in 8..15 {
+        set(8, size - 15 + index, bit(bits, index));
+    }
+
+    set(8, size - 8, true);
 }
 
 #[inline]
@@ -557,9 +585,10 @@ fn line_penalty(values: &[bool]) -> i32 {
 const fn n4_penalty(dark: usize, total: usize) -> i32 {
     let dark = dark as i32;
     let total = total as i32;
+    // The ceiling form would turn a deviation of exactly zero into minus one, so it is clamped.
     let deviation = ((dark * 20 - total * 10).abs() + total - 1) / total - 1;
 
-    deviation * PENALTY_N4
+    if deviation < 0 { 0 } else { deviation * PENALTY_N4 }
 }
 
 fn alignment_positions(version: QrVersion) -> Vec<usize> {
@@ -626,3 +655,7 @@ static NUM_ERROR_CORRECTION_BLOCKS: [[i8; 41]; 4] = [
         35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81,
     ],
 ];
+
+#[cfg(test)]
+#[path = "model2_tests.rs"]
+mod tests;

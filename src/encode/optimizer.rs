@@ -4,7 +4,7 @@ use alloc::{collections::VecDeque, vec, vec::Vec};
 use super::QrVersion;
 #[cfg(feature = "kanji")]
 use super::kanji_encoding;
-use super::{EciAssignment, Mode, Segment, alphanumeric_value};
+use super::{EciAssignment, Mode, Segment, alphanumeric_value, mode_rank};
 use crate::EncodeError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,21 +17,13 @@ impl Profile {
     #[cfg(feature = "qr")]
     #[inline]
     pub(crate) const fn qr(version: QrVersion) -> Self {
-        let group = if version.value() <= 9 {
-            0
-        } else if version.value() <= 26 {
-            1
-        } else {
-            2
-        };
-
         Self {
             mode_bits: 4,
             cci:       [
-                [10, 12, 14][group],
-                [9, 11, 13][group],
-                [8, 16, 16][group],
-                [8, 10, 12][group],
+                Mode::Numeric.cci_bits(version),
+                Mode::Alphanumeric.cci_bits(version),
+                Mode::Byte.cci_bits(version),
+                Mode::Kanji.cci_bits(version),
             ],
         }
     }
@@ -690,7 +682,7 @@ pub(crate) fn text(
 
     let (final_interpretation, _) = final_choice
         .ok_or(EncodeError::DataTooLong {
-            required_bits: usize::MAX, capacity_bits: 0
+            required_bits: None, capacity_bits: 0
         })?;
 
     // Backtracking also recovers the interpretation selected before the first segment.
@@ -947,7 +939,7 @@ fn reconstruct_bytes(
     while position != 0 {
         let step = best[position]
             .ok_or(EncodeError::DataTooLong {
-                required_bits: usize::MAX, capacity_bits: 0
+                required_bits: None, capacity_bits: 0
             })?;
 
         ranges.push((step.previous, position, step.mode));
@@ -1052,17 +1044,6 @@ const fn numeric_bits(count: usize) -> usize {
 #[inline]
 const fn alphanumeric_bits(count: usize) -> usize {
     count / 2 * 11 + count % 2 * 6
-}
-
-#[inline]
-const fn mode_rank(mode: Mode) -> u8 {
-    match mode {
-        Mode::Numeric => 0,
-        Mode::Alphanumeric => 1,
-        Mode::Kanji => 2,
-        Mode::Byte => 3,
-        Mode::Eci => 4,
-    }
 }
 
 #[cfg(all(test, feature = "qr"))]

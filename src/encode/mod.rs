@@ -46,7 +46,7 @@ const fn ensure_input_length(
 ) -> Result<(), EncodeError> {
     if length > per_symbol_capacity.saturating_mul(symbol_count) {
         Err(EncodeError::DataTooLong {
-            required_bits: usize::MAX,
+            required_bits: None,
             capacity_bits: capacity_bits.saturating_mul(symbol_count),
         })
     } else {
@@ -633,13 +633,7 @@ impl Mode {
     #[cfg(feature = "qr")]
     #[inline]
     const fn cci_bits(self, version: QrVersion) -> u8 {
-        let group = if version.0 <= 9 {
-            0
-        } else if version.0 <= 26 {
-            1
-        } else {
-            2
-        };
+        let group = version_group(version);
 
         match self {
             Self::Numeric => [10, 12, 14][group],
@@ -855,6 +849,19 @@ fn kanji_encoding(character: char) -> Option<(u16, [u8; 2])> {
     Some(((adjusted >> 8) * 0xC0 + (adjusted & 0xFF), bytes))
 }
 
+// Orders the modes used for deterministic tie-breaking in the segment optimizers.
+#[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
+#[inline]
+const fn mode_rank(mode: Mode) -> u8 {
+    match mode {
+        Mode::Numeric => 0,
+        Mode::Alphanumeric => 1,
+        Mode::Kanji => 2,
+        Mode::Byte => 3,
+        Mode::Eci => 4,
+    }
+}
+
 #[inline]
 pub(crate) const fn alphanumeric_value(byte: u8) -> Option<u8> {
     match byte {
@@ -953,6 +960,14 @@ impl Symbol {
         (x < width && y < self.height()).then(|| self.modules[y * width + x])
     }
 
+    /// Returns every module as one row-major slice without copying.
+    ///
+    /// A dark module is `true`, and the module at `(x, y)` is at index `y * width + x`.
+    #[inline]
+    pub fn modules(&self) -> &[bool] {
+        &self.modules
+    }
+
     /// Copies the symbol into a row-major Boolean matrix.
     pub fn to_matrix(&self) -> Vec<Vec<bool>> {
         self.modules.chunks(self.width()).map(<[bool]>::to_vec).collect()
@@ -994,6 +1009,7 @@ impl QrEncoder {
     }
 
     /// Selects one exact Model 2 QR Code version.
+    #[must_use]
     #[inline]
     pub const fn version(mut self, version: QrVersion) -> Self {
         self.versions = version..=version;
@@ -1001,6 +1017,7 @@ impl QrEncoder {
     }
 
     /// Selects the inclusive Model 2 QR Code version range considered during encoding.
+    #[must_use]
     #[inline]
     pub const fn version_range(mut self, versions: RangeInclusive<QrVersion>) -> Self {
         self.versions = versions;
@@ -1008,6 +1025,7 @@ impl QrEncoder {
     }
 
     /// Forces an exact mask instead of selecting one automatically.
+    #[must_use]
     #[inline]
     pub const fn mask(mut self, mask: QrMask) -> Self {
         self.mask = Some(mask);
@@ -1015,6 +1033,7 @@ impl QrEncoder {
     }
 
     /// Enables or disables upgrading the error correction level when the selected version has room.
+    #[must_use]
     #[inline]
     pub const fn boost_error_correction(mut self, boost: bool) -> Self {
         self.boost_error_correction = boost;
@@ -1022,6 +1041,7 @@ impl QrEncoder {
     }
 
     /// Sets the FNC1 interpretation applied to the complete symbol.
+    #[must_use]
     #[inline]
     pub const fn fnc1(mut self, fnc1: Option<Fnc1>) -> Self {
         self.fnc1 = fnc1;
@@ -1272,7 +1292,7 @@ impl QrEncoder {
         }
 
         let parts = selected.ok_or(EncodeError::DataTooLong {
-            required_bits: usize::MAX,
+            required_bits: None,
             capacity_bits: model2::data_codewords(*range.end(), self.error_correction) * 8 * 16,
         })?;
 
@@ -1325,7 +1345,7 @@ impl QrEncoder {
         }
 
         let parts = selected.ok_or(EncodeError::DataTooLong {
-            required_bits: usize::MAX,
+            required_bits: None,
             capacity_bits: model2::data_codewords(*range.end(), self.error_correction) * 8 * 16,
         })?;
 
@@ -1376,8 +1396,7 @@ impl QrEncoder {
         while start < data.len() {
             if result.len() == 16 {
                 return Err(EncodeError::DataTooLong {
-                    required_bits: usize::MAX,
-                    capacity_bits: 0,
+                    required_bits: None, capacity_bits: 0
                 });
             }
 
@@ -1403,7 +1422,7 @@ impl QrEncoder {
 
             let end = fitting
                 .ok_or(EncodeError::DataTooLong {
-                    required_bits: usize::MAX, capacity_bits: 0
+                    required_bits: None, capacity_bits: 0
                 })?;
 
             result.push((start, end));
@@ -1428,8 +1447,7 @@ impl QrEncoder {
         while start < length {
             if result.len() == 16 {
                 return Err(EncodeError::DataTooLong {
-                    required_bits: usize::MAX,
-                    capacity_bits: 0,
+                    required_bits: None, capacity_bits: 0
                 });
             }
 
@@ -1458,7 +1476,7 @@ impl QrEncoder {
 
             let end = fitting
                 .ok_or(EncodeError::DataTooLong {
-                    required_bits: usize::MAX, capacity_bits: 0
+                    required_bits: None, capacity_bits: 0
                 })?;
 
             result.push((start, end));
@@ -1698,6 +1716,7 @@ impl RmqrEncoder {
     }
 
     /// Selects one exact rMQR version.
+    #[must_use]
     #[inline]
     pub const fn version(mut self, version: RmqrVersion) -> Self {
         self.versions = version..=version;
@@ -1705,6 +1724,7 @@ impl RmqrEncoder {
     }
 
     /// Selects an inclusive range in rMQR format indicator order.
+    #[must_use]
     #[inline]
     pub const fn version_range(mut self, versions: RangeInclusive<RmqrVersion>) -> Self {
         self.versions = versions;
@@ -1712,6 +1732,7 @@ impl RmqrEncoder {
     }
 
     /// Enables or disables upgrading Medium error correction to High when the selected version has room.
+    #[must_use]
     #[inline]
     pub const fn boost_error_correction(mut self, boost: bool) -> Self {
         self.boost_error_correction = boost;
@@ -1719,6 +1740,7 @@ impl RmqrEncoder {
     }
 
     /// Sets the FNC1 interpretation applied to the complete symbol.
+    #[must_use]
     #[inline]
     pub const fn fnc1(mut self, fnc1: Option<Fnc1>) -> Self {
         self.fnc1 = fnc1;
@@ -1884,6 +1906,7 @@ impl MicroEncoder {
     }
 
     /// Selects one exact Micro QR Code version.
+    #[must_use]
     #[inline]
     pub const fn version(mut self, version: MicroVersion) -> Self {
         self.versions = version..=version;
@@ -1891,6 +1914,7 @@ impl MicroEncoder {
     }
 
     /// Selects the inclusive Micro QR Code version range considered during encoding.
+    #[must_use]
     #[inline]
     pub const fn version_range(mut self, versions: RangeInclusive<MicroVersion>) -> Self {
         self.versions = versions;
@@ -1898,6 +1922,7 @@ impl MicroEncoder {
     }
 
     /// Forces an exact mask instead of selecting one automatically.
+    #[must_use]
     #[inline]
     pub const fn mask(mut self, mask: MicroMask) -> Self {
         self.mask = Some(mask);
@@ -1905,6 +1930,7 @@ impl MicroEncoder {
     }
 
     /// Enables or disables upgrading the error correction level when the selected version has room.
+    #[must_use]
     #[inline]
     pub const fn boost_error_correction(mut self, boost: bool) -> Self {
         self.boost_error_correction = boost;
@@ -2124,7 +2150,7 @@ where
 
         if layer.is_empty() {
             return Err(EncodeError::DataTooLong {
-                required_bits: usize::MAX, capacity_bits: 0
+                required_bits: None, capacity_bits: 0
             });
         }
 
@@ -2133,7 +2159,7 @@ where
 
     let mut state_index = layers[part_count].iter().position(|state| state.end == length).ok_or(
         EncodeError::DataTooLong {
-            required_bits: usize::MAX, capacity_bits: 0
+            required_bits: None, capacity_bits: 0
         },
     )?;
 

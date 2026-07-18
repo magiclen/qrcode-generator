@@ -55,6 +55,7 @@ impl<'a> Renderer<'a> {
     }
 
     /// Sets the minimum quiet zone in modules before any extra centering pixels.
+    #[must_use]
     #[inline]
     pub const fn quiet_zone(mut self, modules: usize) -> Self {
         self.quiet_zone = modules;
