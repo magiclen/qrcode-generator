@@ -1264,6 +1264,8 @@ impl QrEncoder {
     }
 
     /// Encodes bytes as one symbol or automatically splits them into at most 16 Structured Append symbols.
+    ///
+    /// When the data fits one symbol, that lone symbol is returned without Structured Append metadata, because a single symbol needs no sequence header.
     pub fn encode_bytes_with_structured_append(
         &self,
         data: impl AsRef<[u8]>,
@@ -1321,6 +1323,8 @@ impl QrEncoder {
     }
 
     /// Encodes text as one symbol or automatically splits it into at most 16 Structured Append symbols.
+    ///
+    /// When the text fits one symbol, that lone symbol is returned without Structured Append metadata, because a single symbol needs no sequence header.
     pub fn encode_text_with_structured_append(
         &self,
         text: impl AsRef<str>,

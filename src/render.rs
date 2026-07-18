@@ -68,23 +68,28 @@ impl<'a> Renderer<'a> {
         let layout = self.layout()?;
         let length = self.width.checked_mul(self.height).ok_or(RenderError::ImageSizeTooLarge)?;
         let mut image = vec![255; length];
+        let symbol_width = self.symbol.width();
+        let modules = self.symbol.modules();
 
         for y in 0..self.symbol.height() {
             let first_row = layout.margin_y + y * layout.scale;
             let row_start = first_row * self.width;
 
+            // The row is read directly from the module slice because x and y are always in range here.
+            let module_row = &modules[y * symbol_width..][..symbol_width];
+
             // Each horizontal run of dark modules is drawn once into the first pixel row.
             let mut x = 0;
 
-            while x < self.symbol.width() {
-                if self.symbol.module(x, y) != Some(true) {
+            while x < symbol_width {
+                if !module_row[x] {
                     x += 1;
                     continue;
                 }
 
                 let start = x;
 
-                while x < self.symbol.width() && self.symbol.module(x, y) == Some(true) {
+                while x < symbol_width && module_row[x] {
                     x += 1;
                 }
 
@@ -180,19 +185,25 @@ impl<'a> Renderer<'a> {
             self.width, self.height
         )?;
 
+        let symbol_width = self.symbol.width();
+        let modules = self.symbol.modules();
+
         for y in 0..self.symbol.height() {
+            // The row is read directly from the module slice because x and y are always in range here.
+            let module_row = &modules[y * symbol_width..][..symbol_width];
+
             // One SVG rectangle command represents each horizontal run of dark modules.
             let mut x = 0;
 
-            while x < self.symbol.width() {
-                if self.symbol.module(x, y) != Some(true) {
+            while x < symbol_width {
+                if !module_row[x] {
                     x += 1;
                     continue;
                 }
 
                 let start = x;
 
-                while x < self.symbol.width() && self.symbol.module(x, y) == Some(true) {
+                while x < symbol_width && module_row[x] {
                     x += 1;
                 }
 
