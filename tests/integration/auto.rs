@@ -18,13 +18,13 @@ fn selects_micro_then_falls_back_to_model2() {
     let micro_symbol = encoder.encode_text(micro_text).unwrap();
     assert!(matches!(micro_symbol.version(), SymbolVersion::Micro(_)));
     let (image, size) = render_square(&micro_symbol, 10);
-    assert_eq!(decode_square(image, size), micro_text);
+    assert_eq!(micro_text, decode_square(image, size));
 
     let qr_text = "This payload is intentionally too long for every Micro QR Code version.";
     let qr_symbol = encoder.encode_text(qr_text).unwrap();
     assert!(matches!(qr_symbol.version(), SymbolVersion::Qr(_)));
     let (image, size) = render_square(&qr_symbol, 8);
-    assert_eq!(decode_quircs(&image, size), qr_text.as_bytes());
+    assert_eq!(qr_text.as_bytes(), decode_quircs(&image, size));
 }
 
 // Owned and borrowed inputs produce identical symbols through the automatic encoder.

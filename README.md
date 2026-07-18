@@ -45,7 +45,7 @@ A few QR Code words appear throughout this documentation:
 - **Matrix** — the full grid of modules. `Symbol::to_matrix` returns it as `Vec<Vec<bool>>`, and `Symbol::modules` exposes it as one flat row-major slice without copying.
 - **Symbol** — one complete QR Code, Micro QR Code or rMQR symbol.
 - **Version** — the symbol size. QR Code versions run from 1 (21×21 modules) to 40 (177×177), Micro QR Code has versions M1 to M4 (11×11 to 17×17), and rMQR has 32 rectangular sizes.
-- **Error correction level** — how much redundancy is added so a dirty or partly hidden symbol still scans. The Low, Medium, Quartile and High levels recover roughly 7%, 15%, 25% and 30% of the codewords, and a higher level is more robust but leaves less room for your own data.
+- **Error correction level** — how much redundancy is added so a dirty or partly hidden symbol still scans. The Low, Medium, Quartile and High levels recover roughly 7%, 15%, 25% and 30% of the codewords, and a higher level is more robust but leaves less room for your own data. Micro QR Code version M1 instead uses a detection-only level that finds errors without correcting them.
 - **Mask** — a regular pattern applied over the data to avoid layouts that confuse scanners. The best mask is chosen automatically, so you rarely set it yourself.
 - **Quiet zone** — the plain margin around the symbol that scanners need. It defaults to 4 modules for QR Code and 2 for Micro QR Code and rMQR.
 - **Mode / segment** — how characters are packed. Numeric is the most compact, then Alphanumeric, then Byte, plus optional Kanji, and the encoder mixes them automatically to save space.
@@ -197,6 +197,8 @@ let symbol = Encoder::new(ErrorCorrection::Low)
     .encode_text("12345")
     .unwrap();
 ```
+
+Version M1 supports only the `DetectionOnly` error correction level, which detects errors without correcting them; M2 and M3 add Low and Medium, and M4 also offers Quartile.
 
 Micro QR Code does not support ECI, FNC1 or Structured Append. Its text API accepts ISO-8859-1 and, with the `kanji` feature, eligible Shift JIS Kanji characters.
 

@@ -4,6 +4,11 @@ use url::{Position, Url};
 
 use crate::ToQRText;
 
+// The WHATWG special schemes are the ones whose host is parsed and compared case-insensitively.
+fn is_special_scheme(scheme: &str) -> bool {
+    matches!(scheme, "ftp" | "file" | "http" | "https" | "ws" | "wss")
+}
+
 fn uppercase_percent_escapes(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut normalized = String::with_capacity(text.len());
@@ -43,13 +48,21 @@ impl ToQRText for Url {
 
         normalized.push_str(&serialized[..scheme_end].to_ascii_uppercase());
 
-        // URL hosts are case-insensitive, but user information and path data may not be.
+        // A special scheme has a case-insensitive host, but user information and path data may not be.
         if self.has_host() {
             let host_start = self[..Position::BeforeHost].len();
             let host_end = self[..Position::AfterHost].len();
+            let host = &serialized[host_start..host_end];
 
             normalized.push_str(&serialized[scheme_end..host_start]);
-            normalized.push_str(&serialized[host_start..host_end].to_ascii_uppercase());
+
+            // Only special schemes fold host case; an opaque host of any other scheme keeps its case.
+            if is_special_scheme(self.scheme()) {
+                normalized.push_str(&host.to_ascii_uppercase());
+            } else {
+                normalized.push_str(host);
+            }
+
             normalized.push_str(&serialized[host_end..path_start]);
         } else {
             normalized.push_str(&serialized[scheme_end..path_start]);

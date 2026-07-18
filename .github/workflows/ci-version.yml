@@ -24,7 +24,6 @@ jobs:
           -
           - --features micro-qr
           - --features rmqr
-          - --features url
           - --features kanji
           - --features tokio
           - --no-default-features
@@ -58,7 +57,6 @@ jobs:
           -
           - --features micro-qr
           - --features rmqr
-          - --features url
           - --features kanji
           - --features tokio
           - --no-default-features

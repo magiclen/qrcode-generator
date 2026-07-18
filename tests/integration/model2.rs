@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
 use qrcode_generator::{
-    EncodeError, Segment, SymbolVersion, ToQRText,
+    EncodeError, Segment, SymbolErrorCorrection, SymbolVersion, ToQRText,
     qr::{ApplicationIndicator, Encoder, ErrorCorrection, Fnc1, Mask, Version},
 };
 
@@ -43,9 +43,9 @@ fn every_version_and_error_correction_level_round_trips() {
                 .unwrap();
             let (image, size) = render_square(&symbol, 4);
 
-            assert_eq!(symbol.version(), SymbolVersion::Qr(version));
-            assert_eq!(symbol.error_correction(), error_correction.into());
-            assert_eq!(decode_square(image, size), "1", "version {value} {error_correction:?}");
+            assert_eq!(SymbolVersion::Qr(version), symbol.version());
+            assert_eq!(SymbolErrorCorrection::from(error_correction), symbol.error_correction());
+            assert_eq!("1", decode_square(image, size), "version {value} {error_correction:?}");
         }
     }
 }
@@ -93,7 +93,7 @@ fn annex_i_v1_m_matrix_matches() {
         .encode_segments(&[Segment::numeric("01234567").unwrap()])
         .unwrap();
 
-    assert_eq!(matrix_rows(&symbol), ANNEX_QR_V1_M);
+    assert_eq!(ANNEX_QR_V1_M.as_slice(), matrix_rows(&symbol));
 }
 
 // Every one of the eight data masks can be forced and still decodes.
@@ -104,10 +104,10 @@ fn every_forced_mask_round_trips() {
             .mask(Mask::new(mask).unwrap())
             .encode_text("MASK TEST 123")
             .unwrap();
-        assert_eq!(symbol.mask(), mask);
+        assert_eq!(mask, symbol.mask());
 
         let (image, size) = render_square(&symbol, 6);
-        assert_eq!(decode_square(image, size), "MASK TEST 123", "mask {mask}");
+        assert_eq!("MASK TEST 123", decode_square(image, size), "mask {mask}");
     }
 }
 
@@ -118,11 +118,11 @@ fn optimizer_chooses_compact_modes() {
 
     // 100 digits fit version 3 in Numeric mode; as bytes they would need version 5.
     let numeric = encoder.encode_text("1".repeat(100)).unwrap();
-    assert_eq!(numeric.version(), SymbolVersion::Qr(Version::new(3).unwrap()));
+    assert_eq!(SymbolVersion::Qr(Version::new(3).unwrap()), numeric.version());
 
     // 60 letters fit version 3 in Alphanumeric mode; as bytes they would need version 4.
     let alphanumeric = encoder.encode_text("A".repeat(60)).unwrap();
-    assert_eq!(alphanumeric.version(), SymbolVersion::Qr(Version::new(3).unwrap()));
+    assert_eq!(SymbolVersion::Qr(Version::new(3).unwrap()), alphanumeric.version());
 }
 
 // Version 1, 7 and 40 decode through the independent quircs reader as well.
@@ -137,7 +137,7 @@ fn representative_versions_round_trip_through_quircs() {
             .unwrap();
         let (image, size) = render_square(&symbol, 5);
 
-        assert_eq!(decode_quircs(&image, size), text.as_bytes());
+        assert_eq!(text.as_bytes(), decode_quircs(&image, size));
     }
 }
 
@@ -152,7 +152,7 @@ fn near_capacity_multiblock_payload_round_trips() {
         .unwrap();
     let (image, size) = render_square(&symbol, 5);
 
-    assert_eq!(decode_quircs(&image, size), data);
+    assert_eq!(data, decode_quircs(&image, size));
 }
 
 // UTF-8 text, raw binary, GS1 FNC1 and explicit segments each round trip through a decoder.
@@ -161,18 +161,18 @@ fn utf8_binary_fnc1_and_explicit_segments_round_trip() {
     let text = "QR Code 😀 café";
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_text(text).unwrap();
     let (image, size) = render_square(&symbol, 8);
-    assert_eq!(decode_square(image, size), text);
+    assert_eq!(text, decode_square(image, size));
 
     let data = b"binary\0payload\xFF";
     let symbol = Encoder::new(ErrorCorrection::Quartile).encode_bytes(data).unwrap();
     let (image, size) = render_square(&symbol, 8);
-    assert_eq!(decode_quircs(&image, size), data);
+    assert_eq!(data.as_slice(), decode_quircs(&image, size));
 
     let gs1 = b"0101234567890128\x1D10ABC";
     let symbol =
         Encoder::new(ErrorCorrection::Medium).fnc1(Some(Fnc1::Gs1)).encode_bytes(gs1).unwrap();
     let (image, size) = render_square(&symbol, 8);
-    assert_eq!(decode_model2(image, size).getText().as_bytes(), gs1);
+    assert_eq!(gs1.as_slice(), decode_model2(image, size).getText().as_bytes());
 
     Encoder::new(ErrorCorrection::Medium)
         .fnc1(Some(Fnc1::Industry(ApplicationIndicator::numeric(12).unwrap())))
@@ -182,7 +182,7 @@ fn utf8_binary_fnc1_and_explicit_segments_round_trip() {
     let segments = [Segment::numeric("12345").unwrap(), Segment::bytes(b"abc")];
     let symbol = Encoder::new(ErrorCorrection::Low).encode_segments(&segments).unwrap();
     let (image, size) = render_square(&symbol, 8);
-    assert_eq!(decode_square(image, size), "12345abc");
+    assert_eq!("12345abc", decode_square(image, size));
 }
 
 // Kanji text is stored in Kanji mode and read back unchanged.
@@ -193,7 +193,7 @@ fn kanji_mode_round_trips() {
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_text(text).unwrap();
     let (image, size) = render_square(&symbol, 8);
 
-    assert_eq!(decode_model2(image, size).getText(), text);
+    assert_eq!(text, decode_model2(image, size).getText());
 }
 
 // Text mixing UTF-8 and Shift JIS data declares each interpretation explicitly and still decodes.
@@ -204,7 +204,7 @@ fn mixed_utf8_and_kanji_text_round_trips() {
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_text(text).unwrap();
     let (image, size) = render_square(&symbol, 8);
 
-    assert_eq!(decode_square(image, size), text);
+    assert_eq!(text, decode_square(image, size));
 }
 
 // A pure Kanji Structured Append sequence keeps Kanji mode and reassembles to the whole message.
@@ -217,10 +217,10 @@ fn structured_append_kanji_parts_round_trip() {
     let parity = symbols[0].structured_append().unwrap().parity();
 
     for (symbol, expected) in symbols.iter().zip(parts) {
-        assert_eq!(symbol.structured_append().unwrap().parity(), parity);
+        assert_eq!(parity, symbol.structured_append().unwrap().parity());
 
         let (image, size) = render_square(symbol, 8);
-        assert_eq!(decode_square(image, size), expected);
+        assert_eq!(expected, decode_square(image, size));
     }
 }
 
@@ -233,11 +233,11 @@ fn structured_append_metadata_and_payloads_round_trip() {
 
     for (index, (symbol, expected)) in symbols.iter().zip(parts).enumerate() {
         let info = symbol.structured_append().unwrap();
-        assert_eq!((info.index(), info.total()), (index as u8, 2));
-        assert_eq!(info.parity(), symbols[0].structured_append().unwrap().parity());
+        assert_eq!((index as u8, 2), (info.index(), info.total()));
+        assert_eq!(symbols[0].structured_append().unwrap().parity(), info.parity());
 
         let (image, size) = render_square(symbol, 8);
-        assert_eq!(decode_model2(image, size).getText(), expected);
+        assert_eq!(expected, decode_model2(image, size).getText());
     }
 
     let data = vec![b'x'; 80];
@@ -251,7 +251,7 @@ fn structured_append_metadata_and_payloads_round_trip() {
         let (image, size) = render_square(&symbol, 8);
         decoded.extend_from_slice(decode_model2(image, size).getText().as_bytes());
     }
-    assert_eq!(decoded, data);
+    assert_eq!(data, decoded);
 }
 
 // A Structured Append parity derived from optimized UTF-8 parts stays consistent and decodes.
@@ -263,11 +263,79 @@ fn structured_append_text_with_eci_round_trips() {
     let parity = symbols[0].structured_append().unwrap().parity();
 
     for (symbol, expected) in symbols.iter().zip(parts) {
-        assert_eq!(symbol.structured_append().unwrap().parity(), parity);
+        assert_eq!(parity, symbol.structured_append().unwrap().parity());
 
         let (image, size) = render_square(symbol, 8);
-        assert_eq!(decode_square(image, size), expected);
+        assert_eq!(expected, decode_square(image, size));
     }
+}
+
+// Caller-selected byte parts share one parity byte and each part round trips through a decoder.
+#[test]
+fn structured_append_explicit_byte_parts_round_trip() {
+    let parts: [&[u8]; 3] = [b"ALPHA", b"BRAVO", b"CD"];
+    let symbols =
+        Encoder::new(ErrorCorrection::Medium).encode_structured_append_bytes(&parts).unwrap();
+
+    assert_eq!(3, symbols.len());
+
+    let parity = symbols[0].structured_append().unwrap().parity();
+
+    for (index, (symbol, expected)) in symbols.iter().zip(parts).enumerate() {
+        let info = symbol.structured_append().unwrap();
+        assert_eq!((index as u8, 3), (info.index(), info.total()));
+        assert_eq!(parity, info.parity());
+
+        let (image, size) = render_square(symbol, 8);
+        assert_eq!(expected, decode_model2(image, size).getText().as_bytes());
+    }
+}
+
+// Caller-selected segment parts keep their boundaries, share one parity and reassemble.
+#[test]
+fn structured_append_explicit_segment_parts_round_trip() {
+    let first = [Segment::numeric("12345").unwrap(), Segment::alphanumeric("ABC").unwrap()];
+    let second = [Segment::bytes(b"xyz")];
+    let parts: [&[Segment]; 2] = [&first, &second];
+    let symbols =
+        Encoder::new(ErrorCorrection::Low).encode_structured_append_segments(&parts).unwrap();
+
+    assert_eq!(2, symbols.len());
+
+    let parity = symbols[0].structured_append().unwrap().parity();
+
+    for (index, (symbol, expected)) in symbols.iter().zip(["12345ABC", "xyz"]).enumerate() {
+        let info = symbol.structured_append().unwrap();
+        assert_eq!((index as u8, 2), (info.index(), info.total()));
+        assert_eq!(parity, info.parity());
+
+        let (image, size) = render_square(symbol, 8);
+        assert_eq!(expected, decode_square(image, size));
+    }
+}
+
+// A long message split automatically shares one parity and reassembles to the whole text.
+#[test]
+fn structured_append_text_auto_split_round_trips() {
+    let text = "STRUCTURED APPEND AUTO SPLIT 0123456789 ABCDEFGHIJ";
+    let symbols = Encoder::new(ErrorCorrection::Low)
+        .version_range(Version::new(1).unwrap()..=Version::new(1).unwrap())
+        .encode_text_with_structured_append(text)
+        .unwrap();
+
+    assert!(symbols.len() > 1, "the message should not fit a single version 1 symbol");
+
+    let parity = symbols[0].structured_append().unwrap().parity();
+    let mut decoded = String::new();
+
+    for symbol in &symbols {
+        assert_eq!(parity, symbol.structured_append().unwrap().parity());
+
+        let (image, size) = render_square(symbol, 8);
+        decoded.push_str(&decode_square(image, size));
+    }
+
+    assert_eq!(text, decoded);
 }
 
 // A custom ToQRText value is converted exactly once and its shorter spelling is encoded.
@@ -291,8 +359,8 @@ fn qr_text_conversion_is_called_once() {
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_to_qr_text(&value).unwrap();
     let (image, size) = render_square(&symbol, 8);
 
-    assert_eq!(value.calls.get(), 1);
-    assert_eq!(decode_square(image, size), "CUSTOM QR TEXT 123");
+    assert_eq!(1, value.calls.get());
+    assert_eq!("CUSTOM QR TEXT 123", decode_square(image, size));
 }
 
 // Owned and borrowed inputs produce identical symbols, confirming the generic argument bounds.

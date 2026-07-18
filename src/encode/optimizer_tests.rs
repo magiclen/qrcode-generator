@@ -38,7 +38,7 @@ fn decode_plan(segments: &[Segment]) -> String {
                 } else {
                     #[cfg(feature = "kanji")]
                     {
-                        assert_eq!(*segment, Segment::eci(EciAssignment::SHIFT_JIS));
+                        assert_eq!(Segment::eci(EciAssignment::SHIFT_JIS), *segment);
                         Interpretation::ShiftJis
                     }
                     #[cfg(not(feature = "kanji"))]
@@ -47,23 +47,24 @@ fn decode_plan(segments: &[Segment]) -> String {
             },
             // Numeric and alphanumeric characters read identically in every declared charset.
             Mode::Numeric | Mode::Alphanumeric => {
-                for &byte in &segment.source {
+                for &byte in segment.source_bytes() {
                     result.push(char::from(byte));
                 }
             },
             Mode::Byte => match interpretation {
                 Interpretation::Default | Interpretation::Latin1 => {
-                    for &byte in &segment.source {
+                    for &byte in segment.source_bytes() {
                         result.push(char::from(byte));
                     }
                 },
                 Interpretation::Utf8 => result.push_str(
-                    core::str::from_utf8(&segment.source)
+                    core::str::from_utf8(segment.source_bytes())
                         .expect("UTF-8 byte segments hold valid UTF-8"),
                 ),
                 #[cfg(feature = "kanji")]
                 Interpretation::ShiftJis => {
-                    let (decoded, _, had_errors) = encoding_rs::SHIFT_JIS.decode(&segment.source);
+                    let (decoded, _, had_errors) =
+                        encoding_rs::SHIFT_JIS.decode(segment.source_bytes());
 
                     assert!(!had_errors);
                     result.push_str(&decoded);
@@ -78,7 +79,8 @@ fn decode_plan(segments: &[Segment]) -> String {
                         Interpretation::Default | Interpretation::ShiftJis
                     ));
 
-                    let (decoded, _, had_errors) = encoding_rs::SHIFT_JIS.decode(&segment.source);
+                    let (decoded, _, had_errors) =
+                        encoding_rs::SHIFT_JIS.decode(segment.source_bytes());
 
                     assert!(!had_errors);
                     result.push_str(&decoded);
@@ -243,11 +245,11 @@ fn verify_text(text: &str, profile: Profile, fnc1: bool, force_initial_eci: bool
     let expected = reference_text_bits(text, profile, fnc1, force_initial_eci);
 
     assert_eq!(
-        plan_bits(profile, &plan),
         expected,
+        plan_bits(profile, &plan),
         "bits differ for {text:?} fnc1={fnc1} force={force_initial_eci}"
     );
-    assert_eq!(decode_plan(&plan), text, "readback differs for {text:?}");
+    assert_eq!(text, decode_plan(&plan), "readback differs for {text:?}");
 
     if force_initial_eci {
         assert!(matches!(plan.first(), Some(segment) if segment.mode == Mode::Eci));
@@ -322,18 +324,18 @@ fn verify_bytes(data: &[u8], profile: Profile, fnc1: bool) {
     let plan = super::bytes(data, profile, fnc1).expect("bytes always have a plan");
 
     assert_eq!(
-        plan_bits(profile, &plan),
         reference_bytes_bits(data, profile, fnc1),
+        plan_bits(profile, &plan),
         "bits differ for {data:?} fnc1={fnc1}"
     );
 
     let mut readback = Vec::new();
 
     for segment in &plan {
-        readback.extend_from_slice(&segment.source);
+        readback.extend_from_slice(segment.source_bytes());
     }
 
-    assert_eq!(readback, data, "readback differs for {data:?}");
+    assert_eq!(data, readback, "readback differs for {data:?}");
 }
 
 fn text_alphabet() -> Vec<char> {

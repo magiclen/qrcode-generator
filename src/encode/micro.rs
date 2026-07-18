@@ -4,7 +4,7 @@ use alloc::{vec, vec::Vec};
 use super::kanji_encoding;
 use super::{
     MicroErrorCorrection, MicroMask, MicroVersion, Mode, Segment, Symbol, SymbolVersion,
-    alphanumeric_value, bits::BitBuffer, mode_rank, reed_solomon,
+    alphanumeric_value, bch_remainder, bits::BitBuffer, mode_rank, reed_solomon,
 };
 use crate::EncodeError;
 
@@ -335,8 +335,8 @@ pub(crate) fn encode(
 
         for candidate in 0..4 {
             matrix.apply_mask(candidate);
-            matrix.draw_format(candidate);
 
+            // The score only reads the right column and bottom row, which never hold format modules.
             let score = matrix.score();
 
             if score > best_score {
@@ -603,13 +603,7 @@ impl Matrix {
 
     fn draw_format(&mut self, mask: u8) {
         let data = u32::from(symbol_number(self.version, self.error_correction) << 2 | mask);
-        let mut remainder = data;
-
-        for _ in 0..10 {
-            remainder = (remainder << 1) ^ ((remainder >> 9) * 0x537);
-        }
-
-        let bits = (data << 10 | remainder) ^ 0x4445;
+        let bits = (data << 10 | bch_remainder(data, 0x537, 10)) ^ 0x4445;
 
         for offset in 0..8 {
             self.set_function(8, 1 + offset, bits >> offset & 1 != 0);

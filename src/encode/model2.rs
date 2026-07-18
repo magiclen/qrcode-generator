@@ -2,7 +2,7 @@ use alloc::{vec, vec::Vec};
 
 use super::{
     Fnc1, Mode, QrErrorCorrection, QrMask, QrVersion, Segment, StructuredAppendInfo, Symbol,
-    SymbolVersion, bits::BitBuffer, reed_solomon,
+    SymbolVersion, bch_remainder, bits::BitBuffer, reed_solomon,
 };
 use crate::EncodeError;
 
@@ -512,29 +512,15 @@ fn each_format_module(size: usize, bits: u32, mut set: impl FnMut(usize, usize, 
 #[inline]
 const fn format_bits(error_correction: QrErrorCorrection, mask: u8) -> u32 {
     let data = (error_correction.qr_format_bits() << 3 | mask) as u32;
-    let mut remainder = data;
-    let mut round = 0;
 
-    while round < 10 {
-        remainder = (remainder << 1) ^ ((remainder >> 9) * 0x537);
-        round += 1;
-    }
-
-    (data << 10 | remainder) ^ 0x5412
+    (data << 10 | bch_remainder(data, 0x537, 10)) ^ 0x5412
 }
 
 #[inline]
 const fn version_bits(version: QrVersion) -> u32 {
     let data = version.value() as u32;
-    let mut remainder = data;
-    let mut round = 0;
 
-    while round < 12 {
-        remainder = (remainder << 1) ^ ((remainder >> 11) * 0x1F25);
-        round += 1;
-    }
-
-    data << 12 | remainder
+    data << 12 | bch_remainder(data, 0x1F25, 12)
 }
 
 fn line_penalty(values: &[bool]) -> i32 {

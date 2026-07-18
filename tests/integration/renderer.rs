@@ -45,13 +45,13 @@ fn luma_layout_uses_integer_scaling_quiet_zone_and_centering() {
     let height = (symbol.height() + quiet_zone * 2) * scale + 5;
     let image = Renderer::new_with_dimensions(&symbol, width, height).to_luma8().unwrap();
 
-    assert_eq!(image.len(), width * height);
+    assert_eq!(width * height, image.len());
     assert!(image[..width].iter().all(|&pixel| pixel == 255));
 
     let margin_x = (width - symbol.width() * scale) / 2;
     let margin_y = (height - symbol.height() * scale) / 2;
-    assert_eq!(image[margin_y * width + margin_x], 0);
-    assert_eq!(image[(margin_y + scale - 1) * width + margin_x + scale - 1], 0);
+    assert_eq!(0, image[margin_y * width + margin_x]);
+    assert_eq!(0, image[(margin_y + scale - 1) * width + margin_x + scale - 1]);
 }
 
 // Each family renders with its standard quiet zone, so the first dark run starts at the expected offset.
@@ -159,7 +159,7 @@ fn synchronous_svg_writer_matches_memory_rendering() {
         let expected = renderer.to_svg_string(description).unwrap();
         let mut actual = Vec::new();
         renderer.write_svg(&mut actual, description).unwrap();
-        assert_eq!(actual, expected.as_bytes());
+        assert_eq!(expected.as_bytes(), actual);
     }
 }
 
@@ -174,12 +174,12 @@ fn png_and_image_buffer_match_requested_dimensions() {
     let png = renderer.to_png_vec().unwrap();
     let image = renderer.to_image_buffer().unwrap();
 
-    assert_eq!(&png[..8], b"\x89PNG\r\n\x1A\n");
-    assert_eq!(image.dimensions(), (width as u32, height as u32));
+    assert_eq!(b"\x89PNG\r\n\x1A\n", &png[..8]);
+    assert_eq!((width as u32, height as u32), image.dimensions());
 
     let mut written = Vec::new();
     renderer.write_png(&mut written).unwrap();
-    assert_eq!(written, png);
+    assert_eq!(png, written);
 }
 
 // The save APIs write a real SVG and PNG file to disk.
@@ -203,7 +203,7 @@ fn save_apis_write_to_temporary_paths() {
     {
         let png_path = base.with_extension("png");
         renderer.save_png(&png_path).unwrap();
-        assert_eq!(&std::fs::read(&png_path).unwrap()[..8], b"\x89PNG\r\n\x1A\n");
+        assert_eq!(b"\x89PNG\r\n\x1A\n", &std::fs::read(&png_path).unwrap()[..8]);
         std::fs::remove_file(png_path).unwrap();
     }
 }
@@ -218,7 +218,7 @@ async fn tokio_writers_and_savers_match_the_synchronous_apis() {
 
     let mut async_svg = Vec::new();
     renderer.write_svg_async(&mut async_svg, Some(String::from("async"))).await.unwrap();
-    assert_eq!(async_svg, svg.as_bytes());
+    assert_eq!(svg.as_bytes(), async_svg);
 
     let base = std::env::temp_dir().join(format!(
         "qrcode-generator-tokio-{}-{:?}",
@@ -228,7 +228,7 @@ async fn tokio_writers_and_savers_match_the_synchronous_apis() {
 
     let svg_path = base.with_extension("svg");
     renderer.save_svg_async(&svg_path, Some("async")).await.unwrap();
-    assert_eq!(std::fs::read(&svg_path).unwrap(), svg.as_bytes());
+    assert_eq!(svg.as_bytes(), std::fs::read(&svg_path).unwrap());
     std::fs::remove_file(svg_path).unwrap();
 
     #[cfg(feature = "image")]
@@ -237,11 +237,11 @@ async fn tokio_writers_and_savers_match_the_synchronous_apis() {
 
         let mut async_png = Vec::new();
         renderer.write_png_async(&mut async_png).await.unwrap();
-        assert_eq!(async_png, png);
+        assert_eq!(png, async_png);
 
         let png_path = base.with_extension("png");
         renderer.save_png_async(&png_path).await.unwrap();
-        assert_eq!(std::fs::read(&png_path).unwrap(), png);
+        assert_eq!(png, std::fs::read(&png_path).unwrap());
         std::fs::remove_file(png_path).unwrap();
     }
 }

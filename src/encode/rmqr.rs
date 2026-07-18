@@ -1,8 +1,8 @@
 use alloc::{vec, vec::Vec};
 
 use super::{
-    Fnc1, Mode, RmqrErrorCorrection, RmqrVersion, Segment, Symbol, SymbolVersion, bits::BitBuffer,
-    reed_solomon,
+    Fnc1, Mode, RmqrErrorCorrection, RmqrVersion, Segment, Symbol, SymbolVersion, bch_remainder,
+    bits::BitBuffer, reed_solomon,
 };
 use crate::EncodeError;
 
@@ -679,7 +679,7 @@ impl Matrix {
     fn draw_format(&mut self) {
         let data = (u32::from(self.error_correction == RmqrErrorCorrection::High) << 5)
             | u32::from(self.version.value());
-        let raw = format_code(data);
+        let raw = data << 12 | bch_remainder(data, 0x1F25, 12);
         let finder = raw ^ 0b011111101010110010;
         let sub = raw ^ 0b100000101001111011;
 
@@ -740,20 +740,4 @@ fn sub_format_coordinates(width: usize, height: usize) -> impl Iterator<Item = (
         10..=14 => (anchor_x + 2, anchor_y + index - 10),
         _ => (anchor_x + index - 12, anchor_y),
     })
-}
-
-#[inline]
-const fn format_code(data: u32) -> u32 {
-    let mut value = data << 12;
-    let mut bit = 17;
-
-    while bit >= 12 {
-        if value >> bit & 1 != 0 {
-            value ^= 0x1F25 << (bit - 12);
-        }
-
-        bit -= 1;
-    }
-
-    data << 12 | value
 }

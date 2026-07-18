@@ -1,5 +1,5 @@
 use qrcode_generator::{
-    EncodeError, Segment, SymbolVersion,
+    EncodeError, Segment, SymbolErrorCorrection, SymbolVersion,
     micro::{Encoder, ErrorCorrection, Mask, Version},
 };
 
@@ -48,9 +48,9 @@ fn every_legal_version_and_error_correction_pair_round_trips() {
             .unwrap();
         let (image, size) = render_square(&symbol, 10);
 
-        assert_eq!(symbol.version(), SymbolVersion::Micro(version));
-        assert_eq!(symbol.error_correction(), error_correction.into());
-        assert_eq!(decode_square(image, size), text, "{version:?} {error_correction:?}");
+        assert_eq!(SymbolVersion::Micro(version), symbol.version());
+        assert_eq!(SymbolErrorCorrection::from(error_correction), symbol.error_correction());
+        assert_eq!(text, decode_square(image, size), "{version:?} {error_correction:?}");
     }
 }
 
@@ -101,7 +101,7 @@ fn annex_i_m2_l_matrix_matches() {
         .encode_segments(&[Segment::numeric("01234567").unwrap()])
         .unwrap();
 
-    assert_eq!(matrix_rows(&symbol), ANNEX_MICRO_M2_L);
+    assert_eq!(ANNEX_MICRO_M2_L.as_slice(), matrix_rows(&symbol));
 }
 
 // Every one of the four data masks can be forced and still decodes.
@@ -113,10 +113,10 @@ fn every_forced_mask_round_trips() {
             .mask(Mask::new(mask).unwrap())
             .encode_text("MICRO 12")
             .unwrap();
-        assert_eq!(symbol.mask(), mask);
+        assert_eq!(mask, symbol.mask());
 
         let (image, size) = render_square(&symbol, 10);
-        assert_eq!(decode_square(image, size), "MICRO 12", "mask {mask}");
+        assert_eq!("MICRO 12", decode_square(image, size), "mask {mask}");
     }
 }
 
@@ -131,7 +131,7 @@ fn near_capacity_payload_round_trips() {
         .unwrap();
     let (image, size) = render_square(&symbol, 10);
 
-    assert_eq!(decode_square(image, size), text);
+    assert_eq!(text, decode_square(image, size));
 }
 
 // Kanji text is stored in Kanji mode and read back unchanged.
@@ -142,7 +142,7 @@ fn kanji_mode_round_trips() {
     let symbol = Encoder::new(ErrorCorrection::Low).version(Version::M3).encode_text(text).unwrap();
     let (image, size) = render_square(&symbol, 10);
 
-    assert_eq!(decode_square(image, size), text);
+    assert_eq!(text, decode_square(image, size));
 }
 
 // Owned and borrowed inputs produce identical symbols, confirming the generic argument bounds.

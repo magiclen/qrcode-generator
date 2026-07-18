@@ -759,11 +759,21 @@ impl Segment {
     pub fn bytes(data: impl AsRef<[u8]>) -> Self {
         let data = data.as_ref();
 
+        // A Byte segment stores its payload once in `bits`, so `source` stays empty and is read back from there.
         Self {
             mode:            Mode::Byte,
             character_count: data.len(),
             bits:            BitBuffer::from_bytes(data.to_vec()),
-            source:          data.to_vec(),
+            source:          Vec::new(),
+        }
+    }
+
+    // Returns the original bytes a segment was built from, reading a Byte segment back from its bit buffer.
+    #[cfg(any(feature = "qr", feature = "rmqr"))]
+    fn source_bytes(&self) -> &[u8] {
+        match self.mode {
+            Mode::Byte => self.bits.as_bytes(),
+            _ => &self.source,
         }
     }
 
@@ -878,6 +888,22 @@ pub(crate) const fn alphanumeric_value(byte: u8) -> Option<u8> {
         b':' => Some(44),
         _ => None,
     }
+}
+
+// Computes the BCH remainder of the data polynomial times x^degree, reduced by the generator.
+// The generator is given without its leading term and degree is the number of parity bits.
+#[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
+#[inline]
+pub(crate) const fn bch_remainder(data: u32, generator: u32, degree: u32) -> u32 {
+    let mut remainder = data;
+    let mut round = 0;
+
+    while round < degree {
+        remainder = (remainder << 1) ^ ((remainder >> (degree - 1)) * generator);
+        round += 1;
+    }
+
+    remainder
 }
 
 /// An immutable encoded QR Code, Micro QR Code or rMQR symbol.
@@ -1140,7 +1166,7 @@ impl QrEncoder {
 
             // Parity uses the byte representation selected by the optimizer, including Shift JIS or UTF-8 bytes.
             for segment in &segments {
-                for &byte in &segment.source {
+                for &byte in segment.source_bytes() {
                     parity ^= byte;
                 }
             }
@@ -1218,7 +1244,7 @@ impl QrEncoder {
         let parity = parts
             .iter()
             .flat_map(|part| part.iter())
-            .flat_map(|segment| segment.source.iter().copied())
+            .flat_map(|segment| segment.source_bytes().iter().copied())
             .fold(0, |parity, byte| parity ^ byte);
 
         parts
@@ -1670,7 +1696,7 @@ impl QrEncoder {
                 .iter()
                 .map(|segment| {
                     if segment.mode == Mode::Alphanumeric {
-                        Segment::fnc1_alphanumeric(&segment.source)
+                        Segment::fnc1_alphanumeric(segment.source_bytes())
                     } else {
                         Ok(segment.clone())
                     }
@@ -1789,7 +1815,7 @@ impl RmqrEncoder {
                 .iter()
                 .map(|segment| {
                     if segment.mode == Mode::Alphanumeric {
-                        Segment::fnc1_alphanumeric(&segment.source)
+                        Segment::fnc1_alphanumeric(segment.source_bytes())
                     } else {
                         Ok(segment.clone())
                     }

@@ -1,5 +1,5 @@
 use qrcode_generator::{
-    EncodeError, Segment, SymbolVersion,
+    EncodeError, Segment, SymbolErrorCorrection, SymbolVersion,
     rmqr::{ApplicationIndicator, EciAssignment, Encoder, ErrorCorrection, Fnc1, Version},
 };
 use rxing::BarcodeFormat;
@@ -70,10 +70,10 @@ fn every_version_and_error_correction_level_round_trips() {
             let context = format!("{version:?} {error_correction:?}");
             let decoded = decode_rmqr_pure(image, width, height, &context);
 
-            assert_eq!(symbol.version(), SymbolVersion::Rmqr(version));
-            assert_eq!(symbol.error_correction(), error_correction.into());
-            assert_eq!(decoded.getText(), "1", "{context}");
-            assert_eq!(decoded.getBarcodeFormat(), &BarcodeFormat::RECTANGULAR_MICRO_QR_CODE);
+            assert_eq!(SymbolVersion::Rmqr(version), symbol.version());
+            assert_eq!(SymbolErrorCorrection::from(error_correction), symbol.error_correction());
+            assert_eq!("1", decoded.getText(), "{context}");
+            assert_eq!(&BarcodeFormat::RECTANGULAR_MICRO_QR_CODE, decoded.getBarcodeFormat());
         }
     }
 }
@@ -122,7 +122,7 @@ fn annex_i_r11x27_h_matrix_matches() {
         .encode_segments(&[Segment::numeric("0123456").unwrap()])
         .unwrap();
 
-    assert_eq!(matrix_rows(&symbol), ANNEX_RMQR_R11X27_H);
+    assert_eq!(ANNEX_RMQR_R11X27_H.as_slice(), matrix_rows(&symbol));
 }
 
 // A representative symbol is found by the general reader without pure-barcode hints.
@@ -136,8 +136,8 @@ fn representative_symbol_is_detected_without_pure_barcode_hints() {
     let (image, width, height) = render_rmqr(&symbol, 10);
     let decoded = decode_rmqr_detected(image, width, height);
 
-    assert_eq!(decoded.getText(), "0123456");
-    assert_eq!(decoded.getBarcodeFormat(), &BarcodeFormat::RECTANGULAR_MICRO_QR_CODE);
+    assert_eq!("0123456", decoded.getText());
+    assert_eq!(&BarcodeFormat::RECTANGULAR_MICRO_QR_CODE, decoded.getBarcodeFormat());
 }
 
 // A near-capacity payload that spans several error correction blocks still decodes.
@@ -152,8 +152,8 @@ fn near_capacity_multiblock_payload_round_trips() {
     let (image, width, height) = render_rmqr(&symbol, 6);
 
     assert_eq!(
-        decode_rmqr_pure(image, width, height, "near-capacity R17x139-H").getText().as_bytes(),
-        data
+        data,
+        decode_rmqr_pure(image, width, height, "near-capacity R17x139-H").getText().as_bytes()
     );
 }
 
@@ -161,18 +161,21 @@ fn near_capacity_multiblock_payload_round_trips() {
 #[test]
 fn automatic_selection_eci_fnc1_and_explicit_segments_round_trip() {
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_text("1").unwrap();
-    assert_eq!(symbol.version(), SymbolVersion::Rmqr(Version::R11x27));
+    assert_eq!(SymbolVersion::Rmqr(Version::R11x27), symbol.version());
 
     let text = "rMQR 😀";
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_text(text).unwrap();
     let (image, width, height) = render_rmqr(&symbol, 8);
-    assert_eq!(decode_rmqr_pure(image, width, height, "UTF-8 ECI").getText(), text);
+    assert_eq!(text, decode_rmqr_pure(image, width, height, "UTF-8 ECI").getText());
 
     let data = b"0101234567890128\x1D10ABC";
     let symbol =
         Encoder::new(ErrorCorrection::Medium).fnc1(Some(Fnc1::Gs1)).encode_bytes(data).unwrap();
     let (image, width, height) = render_rmqr(&symbol, 8);
-    assert_eq!(decode_rmqr_pure(image, width, height, "FNC1").getText().as_bytes(), data);
+    assert_eq!(
+        data.as_slice(),
+        decode_rmqr_pure(image, width, height, "FNC1").getText().as_bytes()
+    );
 
     Encoder::new(ErrorCorrection::Medium)
         .fnc1(Some(Fnc1::Industry(ApplicationIndicator::numeric(12).unwrap())))
@@ -182,12 +185,12 @@ fn automatic_selection_eci_fnc1_and_explicit_segments_round_trip() {
     let segments = [Segment::numeric("12345").unwrap(), Segment::bytes(b"abc")];
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_segments(&segments).unwrap();
     let (image, width, height) = render_rmqr(&symbol, 8);
-    assert_eq!(decode_rmqr_pure(image, width, height, "explicit segments").getText(), "12345abc");
+    assert_eq!("12345abc", decode_rmqr_pure(image, width, height, "explicit segments").getText());
 
     let segments = [Segment::eci(EciAssignment::UTF_8), Segment::bytes("é".as_bytes())];
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_segments(&segments).unwrap();
     let (image, width, height) = render_rmqr(&symbol, 8);
-    assert_eq!(decode_rmqr_pure(image, width, height, "explicit ECI").getText(), "é");
+    assert_eq!("é", decode_rmqr_pure(image, width, height, "explicit ECI").getText());
 }
 
 // Kanji text is stored in Kanji mode and read back unchanged.
@@ -198,7 +201,7 @@ fn kanji_mode_round_trips() {
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_text(text).unwrap();
     let (image, width, height) = render_rmqr(&symbol, 8);
 
-    assert_eq!(decode_rmqr_pure(image, width, height, "Kanji").getText(), text);
+    assert_eq!(text, decode_rmqr_pure(image, width, height, "Kanji").getText());
 }
 
 // Text mixing UTF-8 and Shift JIS data declares each interpretation explicitly and still decodes.
@@ -209,7 +212,7 @@ fn mixed_utf8_and_kanji_text_round_trips() {
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_text(text).unwrap();
     let (image, width, height) = render_rmqr(&symbol, 8);
 
-    assert_eq!(decode_rmqr_pure(image, width, height, "mixed UTF-8 and Kanji").getText(), text);
+    assert_eq!(text, decode_rmqr_pure(image, width, height, "mixed UTF-8 and Kanji").getText());
 }
 
 // Owned and borrowed inputs produce identical symbols, confirming the generic argument bounds.

@@ -240,7 +240,8 @@ impl<'a> Renderer<'a> {
     ) -> Result<(), RenderError> {
         let mut file = AtomicWriteFile::open(path)?;
 
-        self.write_svg(&mut file, description)?;
+        // Buffering coalesces the many small SVG path writes into a few large writes to the file.
+        self.write_svg(io::BufWriter::new(&mut file), description)?;
 
         file.commit()?;
 

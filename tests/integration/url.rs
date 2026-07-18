@@ -16,9 +16,11 @@ fn normalizes_only_equivalent_url_parts() {
         ),
         ("https://magiclen.org", "HTTPS://MAGICLEN.ORG"),
         ("mailto:User%2f@example.com", "MAILTO:User%2F@example.com"),
+        // A non-special scheme has an opaque host, so only the scheme folds case.
+        ("myapp://Host.Case/Path", "MYAPP://Host.Case/Path"),
     ] {
         let url = Url::parse(input).unwrap();
-        assert_eq!(url.to_qr_text(), expected);
+        assert_eq!(expected, url.to_qr_text());
     }
 }
 
@@ -30,5 +32,5 @@ fn url_can_be_encoded_directly() {
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_to_qr_text(&url).unwrap();
     let (image, size) = render_square(&symbol, 8);
 
-    assert_eq!(decode_square(image, size), "HTTPS://MAGICLEN.ORG");
+    assert_eq!("HTTPS://MAGICLEN.ORG", decode_square(image, size));
 }

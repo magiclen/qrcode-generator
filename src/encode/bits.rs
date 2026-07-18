@@ -114,6 +114,14 @@ impl BitBuffer {
         self.bytes
     }
 
+    #[cfg(any(feature = "qr", feature = "rmqr"))]
+    #[inline]
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        debug_assert_eq!(self.len & 7, 0);
+
+        &self.bytes
+    }
+
     #[cfg(feature = "micro-qr")]
     #[inline]
     pub(crate) fn into_padded_bytes(self) -> Vec<u8> {
