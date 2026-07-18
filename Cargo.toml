@@ -8,7 +8,7 @@ repository = "https://github.com/magiclen/qrcode-generator"
 homepage = "https://magiclen.org/qrcode-generator"
 keywords = ["qrcode", "micro-qr", "rmqr", "png", "svg"]
 categories = ["encoding", "multimedia::images"]
-description = "Generate QR Code matrices and images in RAW, PNG and SVG formats."
+description = "Generates ISO/IEC 18004 QR Code and Micro QR Code symbols and ISO/IEC 23941 rMQR symbols in pure Rust, then renders them as grayscale, PNG and SVG images."
 license = "MIT"
 include = ["src/**/*", "!src/**/*_tests.rs", "Cargo.toml", "README.md", "LICENSE"]
 
