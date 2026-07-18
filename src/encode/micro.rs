@@ -239,6 +239,7 @@ pub(crate) fn encode(
     requested_mask: Option<MicroMask>,
     boost_error_correction: bool,
 ) -> Result<Symbol, EncodeError> {
+    // DetectionOnly is intentionally M1-only, so other versions reject it here instead of upgrading it to Low.
     let mut capacity_info =
         capacity(version, error_correction).ok_or(EncodeError::UnsupportedErrorCorrection {
             version:          SymbolVersion::Micro(version),

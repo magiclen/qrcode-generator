@@ -1184,22 +1184,18 @@ impl QrEncoder {
             index: 0, total: 16, parity: 0
         };
         let range = self.versions.clone();
-        let mut cache: [Option<Vec<Segment>>; 3] = [None, None, None];
+        let mut cache = GroupCache::new(|version| {
+            optimizer::text(
+                text,
+                optimizer::Profile::qr(version),
+                self.fnc1.is_some(),
+                force_initial_eci,
+            )
+        });
 
         for value in range.start().0..=range.end().0 {
             let version = QrVersion(value);
-            let group = version_group(version);
-
-            if cache[group].is_none() {
-                cache[group] = Some(optimizer::text(
-                    text,
-                    optimizer::Profile::qr(version),
-                    self.fnc1.is_some(),
-                    force_initial_eci,
-                )?);
-            }
-
-            let segments = cache[group].as_deref().expect("the version group is cached");
+            let segments = cache.get(version)?;
 
             if model2::fits(segments, version, self.error_correction, self.fnc1, Some(header)) {
                 return Ok((version, segments.to_vec()));
@@ -1208,18 +1204,8 @@ impl QrEncoder {
 
         // No version fits, so the largest one is returned to reproduce the same capacity error later.
         let version = *range.end();
-        let group = version_group(version);
 
-        if cache[group].is_none() {
-            cache[group] = Some(optimizer::text(
-                text,
-                optimizer::Profile::qr(version),
-                self.fnc1.is_some(),
-                force_initial_eci,
-            )?);
-        }
-
-        Ok((version, cache[group].take().expect("the final version group is cached")))
+        Ok((version, cache.take(version)?))
     }
 
     /// Encodes caller-selected segment parts as one Structured Append sequence.
@@ -1271,8 +1257,15 @@ impl QrEncoder {
 
         ensure_input_length(data.len(), capacity, capacity_bits, 16)?;
 
+        // Partitioning failures replace internal placeholder errors with the full sequence capacity.
+        let sequence_capacity_error = || EncodeError::DataTooLong {
+            required_bits: None,
+            capacity_bits: model2::data_codewords(*range.end(), self.error_correction) * 8 * 16,
+        };
+
         // Greedy maximum-size parts determine the minimum possible symbol count.
-        let minimum_parts = self.partition_bytes(data, range.clone())?.len();
+        let minimum_parts =
+            self.partition_bytes(data, range.clone()).map_err(|_| sequence_capacity_error())?.len();
 
         let mut selected = None;
 
@@ -1282,19 +1275,19 @@ impl QrEncoder {
             if let Ok(parts) = self.partition_bytes(data, *range.start()..=candidate)
                 && parts.len() == minimum_parts
             {
-                selected = Some(self.minimum_area_byte_partition(
-                    data,
-                    minimum_parts,
-                    *range.start()..=candidate,
-                )?);
+                selected = Some(
+                    self.minimum_area_byte_partition(
+                        data,
+                        minimum_parts,
+                        *range.start()..=candidate,
+                    )
+                    .map_err(|_| sequence_capacity_error())?,
+                );
                 break;
             }
         }
 
-        let parts = selected.ok_or(EncodeError::DataTooLong {
-            required_bits: None,
-            capacity_bits: model2::data_codewords(*range.end(), self.error_correction) * 8 * 16,
-        })?;
+        let parts = selected.ok_or_else(sequence_capacity_error)?;
 
         let slices: Vec<&[u8]> = parts.into_iter().map(|(start, end)| &data[start..end]).collect();
 
@@ -1323,8 +1316,17 @@ impl QrEncoder {
 
         let offsets = text_boundaries(text);
 
+        // Partitioning failures replace internal placeholder errors with the full sequence capacity.
+        let sequence_capacity_error = || EncodeError::DataTooLong {
+            required_bits: None,
+            capacity_bits: model2::data_codewords(*range.end(), self.error_correction) * 8 * 16,
+        };
+
         // Text partitions use scalar boundaries so no UTF-8 character is split between symbols.
-        let minimum_parts = self.partition_text(text, &offsets, range.clone())?.len();
+        let minimum_parts = self
+            .partition_text(text, &offsets, range.clone())
+            .map_err(|_| sequence_capacity_error())?
+            .len();
 
         let mut selected = None;
 
@@ -1334,20 +1336,20 @@ impl QrEncoder {
             if let Ok(parts) = self.partition_text(text, &offsets, *range.start()..=candidate)
                 && parts.len() == minimum_parts
             {
-                selected = Some(self.minimum_area_text_partition(
-                    text,
-                    &offsets,
-                    minimum_parts,
-                    *range.start()..=candidate,
-                )?);
+                selected = Some(
+                    self.minimum_area_text_partition(
+                        text,
+                        &offsets,
+                        minimum_parts,
+                        *range.start()..=candidate,
+                    )
+                    .map_err(|_| sequence_capacity_error())?,
+                );
                 break;
             }
         }
 
-        let parts = selected.ok_or(EncodeError::DataTooLong {
-            required_bits: None,
-            capacity_bits: model2::data_codewords(*range.end(), self.error_correction) * 8 * 16,
-        })?;
+        let parts = selected.ok_or_else(sequence_capacity_error)?;
 
         let slices: Vec<&str> =
             parts.into_iter().map(|(start, end)| &text[offsets[start]..offsets[end]]).collect();
@@ -1549,7 +1551,7 @@ impl QrEncoder {
     }
 
     // Runs the fit check without drawing a symbol, so probing skips the matrix and mask work.
-    fn qr_range_fits<F>(&self, range: RangeInclusive<QrVersion>, mut segments: F) -> bool
+    fn qr_range_fits<F>(&self, range: RangeInclusive<QrVersion>, segments: F) -> bool
     where
         F: FnMut(QrVersion) -> Result<Vec<Segment>, EncodeError>, {
         if range.start() > range.end() {
@@ -1560,21 +1562,14 @@ impl QrEncoder {
         let header = StructuredAppendInfo {
             index: 0, total: 16, parity: 0
         };
-        let mut cache: [Option<Vec<Segment>>; 3] = [None, None, None];
+        let mut cache = GroupCache::new(segments);
 
         for value in range.start().0..=range.end().0 {
             let version = QrVersion(value);
-            let group = version_group(version);
 
-            if cache[group].is_none() {
-                let Ok(candidate) = segments(version) else {
-                    return false;
-                };
-
-                cache[group] = Some(candidate);
-            }
-
-            let candidate = cache[group].as_deref().expect("the version group is cached");
+            let Ok(candidate) = cache.get(version) else {
+                return false;
+            };
 
             if model2::fits(candidate, version, self.error_correction, self.fnc1, Some(header)) {
                 return true;
@@ -1624,7 +1619,7 @@ impl QrEncoder {
     fn encode_qr_range<F>(
         &self,
         range: RangeInclusive<QrVersion>,
-        mut segments: F,
+        segments: F,
         structured_append: Option<StructuredAppendInfo>,
     ) -> Result<Symbol, EncodeError>
     where
@@ -1633,19 +1628,12 @@ impl QrEncoder {
             return Err(EncodeError::InvalidVersionRange);
         }
 
-        // Character count indicator widths change only at versions 10 and 27.
-        let mut cache: [Option<Vec<Segment>>; 3] = [None, None, None];
+        let mut cache = GroupCache::new(segments);
         let mut last_error = None;
 
         for value in range.start().0..=range.end().0 {
             let version = QrVersion(value);
-            let group = version_group(version);
-
-            if cache[group].is_none() {
-                cache[group] = Some(segments(version)?);
-            }
-
-            let candidate = cache[group].as_deref().expect("the version group is cached");
+            let candidate = cache.get(version)?;
 
             match model2::encode(
                 candidate,
@@ -1657,11 +1645,16 @@ impl QrEncoder {
                 structured_append,
             ) {
                 Ok(symbol) => return Ok(symbol),
-                Err(error) => last_error = Some(error),
+                Err(
+                    error @ EncodeError::DataTooLong {
+                        ..
+                    },
+                ) => last_error = Some(error),
+                Err(error) => return Err(error),
             }
         }
 
-        // The version range is verified to be non-empty, so at least one error was stored.
+        // The version range is verified to be non-empty, so at least one capacity error was stored.
         Err(last_error.unwrap_or(EncodeError::InvalidVersionRange))
     }
 
@@ -2256,6 +2249,39 @@ const fn version_group(version: QrVersion) -> usize {
         1
     } else {
         2
+    }
+}
+
+// Caches segments per version group during a version scan, because character count indicator widths change only at versions 10 and 27.
+#[cfg(feature = "qr")]
+struct GroupCache<F> {
+    segments: F,
+    cache:    [Option<Vec<Segment>>; 3],
+}
+
+#[cfg(feature = "qr")]
+impl<F: FnMut(QrVersion) -> Result<Vec<Segment>, EncodeError>> GroupCache<F> {
+    fn new(segments: F) -> Self {
+        Self {
+            segments,
+            cache: [None, None, None],
+        }
+    }
+
+    fn get(&mut self, version: QrVersion) -> Result<&[Segment], EncodeError> {
+        let group = version_group(version);
+
+        if self.cache[group].is_none() {
+            self.cache[group] = Some((self.segments)(version)?);
+        }
+
+        Ok(self.cache[group].as_deref().expect("the version group is cached"))
+    }
+
+    fn take(&mut self, version: QrVersion) -> Result<Vec<Segment>, EncodeError> {
+        self.get(version)?;
+
+        Ok(self.cache[version_group(version)].take().expect("the version group is cached"))
     }
 }
 

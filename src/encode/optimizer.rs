@@ -2,8 +2,6 @@ use alloc::{collections::VecDeque, vec, vec::Vec};
 
 #[cfg(feature = "qr")]
 use super::QrVersion;
-#[cfg(feature = "kanji")]
-use super::kanji_encoding;
 use super::{EciAssignment, Mode, Segment, alphanumeric_value, mode_rank};
 use crate::EncodeError;
 
@@ -194,11 +192,13 @@ impl TextTables {
 
             #[cfg(feature = "kanji")]
             {
-                kanji_ok.push(kanji_encoding(character).is_some());
+                let (kanji, sjis_length) = sjis_classification(character);
+
+                kanji_ok.push(kanji);
 
                 let previous = sjis_prefix.last().copied().expect("the prefix starts at zero");
 
-                match sjis_byte_length(character) {
+                match sjis_length {
                     Some(bytes) => {
                         sjis_ok.push(true);
                         sjis_prefix.push(previous + bytes);
@@ -227,20 +227,31 @@ impl TextTables {
     }
 }
 
-// Returns the Shift JIS byte length of a character usable in a byte segment under ECI 20.
+// Reports Kanji mode eligibility and the ECI 20 byte segment length of a character with one Shift JIS conversion.
 // Backslash, tilde, yen and overline are rejected because WHATWG and JIS X 0201 decode bytes 5C and 7E differently.
 #[cfg(feature = "kanji")]
-fn sjis_byte_length(character: char) -> Option<usize> {
+fn sjis_classification(character: char) -> (bool, Option<usize>) {
     match character {
-        '\\' | '~' | '¥' | '\u{203E}' => None,
-        _ if character.is_ascii() => Some(1),
-        '\u{FF61}'..='\u{FF9F}' => Some(1),
+        '\\' | '~' | '¥' | '\u{203E}' => (false, None),
+        _ if character.is_ascii() => (false, Some(1)),
+        '\u{FF61}'..='\u{FF9F}' => (false, Some(1)),
         _ => {
             let mut utf8 = [0; 4];
             let text = character.encode_utf8(&mut utf8);
             let (encoded, _, had_errors) = encoding_rs::SHIFT_JIS.encode(text);
 
-            (!had_errors).then(|| encoded.len())
+            if had_errors {
+                return (false, None);
+            }
+
+            // Kanji mode covers exactly the two-byte values inside the two compactable Shift JIS ranges.
+            let kanji = encoded.len() == 2
+                && matches!(
+                    u16::from_be_bytes([encoded[0], encoded[1]]),
+                    0x8140..=0x9FFC | 0xE040..=0xEBBF
+                );
+
+            (kanji, Some(encoded.len()))
         },
     }
 }

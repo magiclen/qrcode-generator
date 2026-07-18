@@ -20,7 +20,7 @@ pub(crate) fn encode(
     fnc1: Option<Fnc1>,
     structured_append: Option<StructuredAppendInfo>,
 ) -> Result<Symbol, EncodeError> {
-    let used_bits = total_bits(segments, version, fnc1, structured_append)?;
+    let used_bits = total_bits(segments, version, error_correction, fnc1, structured_append)?;
     let mut capacity_bits = data_codewords(version, error_correction) * 8;
 
     if used_bits > capacity_bits {
@@ -149,7 +149,7 @@ pub(crate) fn fits(
     structured_append: Option<StructuredAppendInfo>,
 ) -> bool {
     matches!(
-        total_bits(segments, version, fnc1, structured_append),
+        total_bits(segments, version, error_correction, fnc1, structured_append),
         Ok(used_bits) if used_bits <= data_codewords(version, error_correction) * 8
     )
 }
@@ -157,6 +157,7 @@ pub(crate) fn fits(
 fn total_bits(
     segments: &[Segment],
     version: QrVersion,
+    error_correction: QrErrorCorrection,
     fnc1: Option<Fnc1>,
     structured_append: Option<StructuredAppendInfo>,
 ) -> Result<usize, EncodeError> {
@@ -174,7 +175,7 @@ fn total_bits(
         if segment.mode != Mode::Eci && segment.character_count >= 1usize << cci {
             return Err(EncodeError::DataTooLong {
                 required_bits: None,
-                capacity_bits: data_codewords(version, QrErrorCorrection::Low) * 8,
+                capacity_bits: data_codewords(version, error_correction) * 8,
             });
         }
 
