@@ -22,11 +22,21 @@ jobs:
           - nightly
         features:
           -
+          - --features micro-qr
+          - --features rmqr
+          - --features kanji
+          - --features tokio
           - --no-default-features
+          - --no-default-features --features qr
+          - --no-default-features --features micro-qr
+          - --no-default-features --features qr --features micro-qr
+          - --no-default-features --features rmqr
+          - --no-default-features --features qr --features kanji
+          - --all-features
     name: Test ${{ matrix.toolchain }} on ${{ matrix.os }} (${{ matrix.features }})
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ matrix.toolchain }}
@@ -42,14 +52,24 @@ jobs:
           - macos-latest
           - windows-latest
         toolchain:
-          - 1.67
+          - 1.89
         features:
           -
+          - --features micro-qr
+          - --features rmqr
+          - --features kanji
+          - --features tokio
           - --no-default-features
+          - --no-default-features --features qr
+          - --no-default-features --features micro-qr
+          - --no-default-features --features qr --features micro-qr
+          - --no-default-features --features rmqr
+          - --no-default-features --features qr --features kanji
+          - --all-features
     name: Test ${{ matrix.toolchain }} on ${{ matrix.os }} (${{ matrix.features }})
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ matrix.toolchain }}

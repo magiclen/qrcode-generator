@@ -1,32 +1,110 @@
 [package]
 name = "qrcode-generator"
-version = "5.0.0"
+version = "6.0.0"
 authors = ["Magic Len <len@magiclen.org>"]
-edition = "2021"
-rust-version = "1.67"
+edition = "2024"
+rust-version = "1.89"
 repository = "https://github.com/magiclen/qrcode-generator"
 homepage = "https://magiclen.org/qrcode-generator"
-keywords = ["qrcode", "generate", "png", "svg", "vec"]
+keywords = ["qrcode", "micro-qr", "rmqr", "png", "svg"]
 categories = ["encoding", "multimedia::images"]
-description = "Generate QR Code matrices and images in RAW, PNG and SVG formats."
+description = "Generates ISO/IEC 18004 QR Code and Micro QR Code symbols and ISO/IEC 23941 rMQR symbols in pure Rust, then renders them as grayscale, PNG and SVG images."
 license = "MIT"
-include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
+include = ["src/**/*", "!src/**/*_tests.rs", "Cargo.toml", "README.md", "LICENSE"]
 
 [dependencies]
-qrcodegen = "1.8"
-html-escape = "0.2"
+atomic-write-file = { version = "0.3", optional = true }
+html-escape = { version = "0.2", default-features = false }
 
-[dependencies.image]
-version = "0.25"
-optional = true
-default-features = false
-features = ["png"]
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+
+tokio = { version = "1", optional = true, default-features = false, features = ["rt", "io-util"] }
+
+encoding_rs = { version = "0.8.29", optional = true, default-features = false, features = ["alloc", "fast-kanji-encode"] }
+url = { version = "2.5.3", optional = true, default-features = false }
 
 [dev-dependencies]
-manifest-dir-macros = "0.1"
+bencher = "0.1"
+quircs = "0.10"
+rxing = { version = "0.9", default-features = false, features = ["decoders", "encoding_rs", "qrcode"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "fs", "io-util"] }
 
 [features]
-default = ["image"]
+default = ["std", "qr", "image"]
+
+std = ["dep:atomic-write-file", "html-escape/std", "url?/std"]
+
+image = ["std", "dep:image"]
+tokio = ["std", "dep:tokio"]
+kanji = ["dep:encoding_rs"]
+url = ["dep:url"]
+
+qr = []
+micro-qr = []
+rmqr = []
+
+[[example]]
+name = "basic"
+required-features = ["std", "qr", "image"]
+
+[[example]]
+name = "bytes"
+required-features = ["std", "qr"]
+
+[[example]]
+name = "error_correction"
+required-features = ["std", "qr"]
+
+[[example]]
+name = "segments"
+required-features = ["std", "qr"]
+
+[[example]]
+name = "structured_append"
+required-features = ["std", "qr"]
+
+[[example]]
+name = "url"
+required-features = ["std", "qr", "url"]
+
+[[example]]
+name = "micro_qr"
+required-features = ["std", "micro-qr"]
+
+[[example]]
+name = "rmqr"
+required-features = ["std", "rmqr"]
+
+[[example]]
+name = "auto"
+required-features = ["std", "qr", "micro-qr"]
+
+[[example]]
+name = "kanji"
+required-features = ["std", "qr"]
+
+[[example]]
+name = "tokio_file"
+required-features = ["std", "qr", "tokio"]
+
+[[example]]
+name = "terminal"
+required-features = ["std", "qr"]
+
+[[example]]
+name = "fnc1"
+required-features = ["std", "qr"]
+
+[[bench]]
+name = "encode"
+harness = false
+required-features = ["qr", "micro-qr", "rmqr"]
+
+[[bench]]
+name = "render"
+harness = false
+required-features = ["qr", "image"]
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
