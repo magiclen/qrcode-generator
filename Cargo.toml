@@ -88,6 +88,10 @@ name = "tokio_file"
 required-features = ["std", "qr", "tokio"]
 
 [[example]]
+name = "terminal"
+required-features = ["std", "qr"]
+
+[[example]]
 name = "fnc1"
 required-features = ["std", "qr"]
 

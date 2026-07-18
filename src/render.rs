@@ -369,6 +369,51 @@ impl<'a> Renderer<'a> {
     }
 }
 
+/// Draws the symbol as compact Unicode text using half-block characters, with one module per column and two module rows per line.
+///
+/// The alternate form (`{:#}`) inverts dark and light modules for dark terminal backgrounds.
+/// Pixel dimensions are ignored; only the quiet zone setting applies.
+/// Each line ends with a newline.
+///
+/// Note: half-block characters have ambiguous East Asian width and may render as two columns in some CJK terminals, causing misalignment.
+impl fmt::Display for Renderer<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let visible_dark = !f.alternate();
+        let quiet_zone = self.quiet_zone;
+        let columns = self.symbol.width() + quiet_zone * 2;
+        let rows = self.symbol.height() + quiet_zone * 2;
+
+        for upper in (0..rows).step_by(2) {
+            for x in 0..columns {
+                let visible = |y: usize| {
+                    // Out-of-range lookups return `None`, so the quiet zone reads as light without a boundary check.
+                    let dark = x
+                        .checked_sub(quiet_zone)
+                        .zip(y.checked_sub(quiet_zone))
+                        .and_then(|(x, y)| self.symbol.module(x, y))
+                        == Some(true);
+
+                    dark == visible_dark
+                };
+
+                // The leftover half of an odd final line stays blank in both forms.
+                let lower = upper + 1 < rows && visible(upper + 1);
+
+                f.write_str(match (visible(upper), lower) {
+                    (true, true) => "█",
+                    (true, false) => "▀",
+                    (false, true) => "▄",
+                    (false, false) => " ",
+                })?;
+            }
+
+            f.write_str("\n")?;
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(feature = "std")]
 struct IoFmtWriter<W> {
     inner: W,

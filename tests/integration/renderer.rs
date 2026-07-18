@@ -91,6 +91,49 @@ fn standard_quiet_zones_are_used_for_every_enabled_family() {
     }
 }
 
+// Text output packs two module rows per line with half block characters, includes the quiet zone, and the alternate form flips visibility.
+#[test]
+fn unicode_text_output_matches_modules_in_both_forms() {
+    let symbol = symbol();
+    let quiet_zone = default_quiet_zone(&symbol);
+    let renderer = Renderer::new(&symbol, 0);
+    let columns = symbol.width() + quiet_zone * 2;
+    let rows = symbol.height() + quiet_zone * 2;
+
+    for (visible_dark, output) in [(true, format!("{renderer}")), (false, format!("{renderer:#}"))]
+    {
+        let lines: Vec<&str> = output.lines().collect();
+
+        assert_eq!(rows.div_ceil(2), lines.len(), "line count for visible_dark={visible_dark}");
+
+        for (pair, line) in lines.iter().enumerate() {
+            let cells: Vec<char> = line.chars().collect();
+
+            assert_eq!(columns, cells.len());
+
+            for (x, &cell) in cells.iter().enumerate() {
+                let visible = |y: usize| {
+                    y < rows
+                        && (x
+                            .checked_sub(quiet_zone)
+                            .zip(y.checked_sub(quiet_zone))
+                            .and_then(|(x, y)| symbol.module(x, y))
+                            == Some(true))
+                            == visible_dark
+                };
+                let expected = match (visible(pair * 2), visible(pair * 2 + 1)) {
+                    (true, true) => '█',
+                    (true, false) => '▀',
+                    (false, true) => '▄',
+                    (false, false) => ' ',
+                };
+
+                assert_eq!(expected, cell, "cell ({x}, {pair}) visible_dark={visible_dark}");
+            }
+        }
+    }
+}
+
 // SVG rendering escapes a supplied description and falls back to a default when none is given.
 #[test]
 fn svg_memory_rendering_accepts_all_description_forms() {
