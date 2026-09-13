@@ -24,7 +24,7 @@ fn plan_bits(profile: Profile, segments: &[Segment]) -> usize {
 }
 
 // Replays the plan the way a strict AIM ECI reader would and returns the decoded text.
-fn decode_plan(segments: &[Segment]) -> String {
+fn decode_plan(segments: &[Segment], fnc1: bool) -> String {
     let mut interpretation = Interpretation::Default;
     let mut result = String::new();
 
@@ -46,8 +46,13 @@ fn decode_plan(segments: &[Segment]) -> String {
                 };
             },
             // Numeric and alphanumeric characters read identically in every declared charset.
-            Mode::Numeric | Mode::Alphanumeric => {
+            Mode::Numeric => {
                 for &byte in segment.source_bytes() {
+                    result.push(char::from(byte));
+                }
+            },
+            Mode::Alphanumeric => {
+                for byte in decode_alphanumeric(segment, fnc1) {
                     result.push(char::from(byte));
                 }
             },
@@ -94,6 +99,46 @@ fn decode_plan(segments: &[Segment]) -> String {
     result
 }
 
+fn decode_alphanumeric(segment: &Segment, fnc1: bool) -> Vec<u8> {
+    const ALPHABET: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
+    let mut offset = 0;
+    let mut read = |count| {
+        let mut value = 0usize;
+        for _ in 0..count {
+            value = value * 2 + usize::from(segment.bits.bit(offset));
+            offset += 1;
+        }
+        value
+    };
+    let mut encoded = Vec::new();
+    for _ in 0..segment.character_count / 2 {
+        let value = read(11);
+        encoded.extend_from_slice(&[ALPHABET[value / 45], ALPHABET[value % 45]]);
+    }
+    if !segment.character_count.is_multiple_of(2) {
+        encoded.push(ALPHABET[read(6)]);
+    }
+    assert_eq!(segment.bits.len(), offset);
+
+    let mut result = Vec::new();
+    let mut position = 0;
+    while position < encoded.len() {
+        let byte = encoded[position];
+        if fnc1 && byte == b'%' {
+            if encoded.get(position + 1) == Some(&b'%') {
+                result.push(b'%');
+                position += 1;
+            } else {
+                result.push(0x1D);
+            }
+        } else {
+            result.push(byte);
+        }
+        position += 1;
+    }
+    result
+}
+
 // A direct quadratic reference that explores every legal edge, confirming bit optimality.
 fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, force_initial_eci: bool) -> usize {
     let tables = TextTables::new(text, fnc1);
@@ -137,6 +182,10 @@ fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, force_initial_e
 
             while end < length
                 && tables.alnum_ok[end]
+                && (!fnc1
+                    || end == start
+                    || text.as_bytes()[tables.offsets[end - 1]] != 0x1D
+                    || !matches!(text.as_bytes()[tables.offsets[end]], 0x1D | b'%'))
                 && tables.alnum_prefix[end + 1] - tables.alnum_prefix[start]
                     <= max_count(Mode::Alphanumeric, profile)
             {
@@ -249,7 +298,7 @@ fn verify_text(text: &str, profile: Profile, fnc1: bool, force_initial_eci: bool
         plan_bits(profile, &plan),
         "bits differ for {text:?} fnc1={fnc1} force={force_initial_eci}"
     );
-    assert_eq!(text, decode_plan(&plan), "readback differs for {text:?}");
+    assert_eq!(text, decode_plan(&plan, fnc1), "readback differs for {text:?}");
 
     if force_initial_eci {
         assert!(matches!(plan.first(), Some(segment) if segment.mode == Mode::Eci));
@@ -305,6 +354,7 @@ fn reference_bytes_bits(data: &[u8], profile: Profile, fnc1: bool) -> usize {
 
         while end < data.len()
             && (alphanumeric_value(data[end]).is_some() || (fnc1 && data[end] == 0x1D))
+            && (!fnc1 || end == start || data[end - 1] != 0x1D || !matches!(data[end], 0x1D | b'%'))
             && alnum_prefix[end + 1] - alnum_prefix[start] <= max_count(Mode::Alphanumeric, profile)
         {
             end += 1;
@@ -332,7 +382,11 @@ fn verify_bytes(data: &[u8], profile: Profile, fnc1: bool) {
     let mut readback = Vec::new();
 
     for segment in &plan {
-        readback.extend_from_slice(segment.source_bytes());
+        if segment.mode == Mode::Alphanumeric {
+            readback.extend(decode_alphanumeric(segment, fnc1));
+        } else {
+            readback.extend_from_slice(segment.source_bytes());
+        }
     }
 
     assert_eq!(data, readback, "readback differs for {data:?}");
@@ -343,16 +397,77 @@ fn text_alphabet() -> Vec<char> {
     let mut result = vec!['7', 'K', '%', ' ', 'é', '😀', '\\', '\u{1D}'];
 
     #[cfg(feature = "kanji")]
-    result.extend(['点', 'ﾃ', '¥']);
+    result.extend(['点', 'ﾃ', '¥', '−', '－']);
 
     result
 }
 
-fn profiles() -> [Profile; 2] {
-    [
+fn profiles() -> Vec<Profile> {
+    let mut profiles = Vec::new();
+
+    #[cfg(feature = "qr")]
+    profiles.extend([
         Profile::qr(QrVersion::new(1).expect("version 1 is valid")),
         Profile::qr(QrVersion::new(27).expect("version 27 is valid")),
-    ]
+    ]);
+    #[cfg(feature = "rmqr")]
+    profiles.push(Profile::rmqr(super::super::rmqr::cci(super::super::RmqrVersion::R7x43)));
+
+    profiles
+}
+
+#[test]
+fn fnc1_adjacent_separators_and_percents_round_trip() {
+    #[allow(unused_mut)]
+    let mut profiles = profiles();
+
+    // Every distinct rMQR character count indicator profile joins in, because the shortest ones force extra segments.
+    #[cfg(feature = "rmqr")]
+    for version in super::super::RmqrVersion::ALL {
+        let profile = Profile::rmqr(super::super::rmqr::cci(version));
+
+        if !profiles.contains(&profile) {
+            profiles.push(profile);
+        }
+    }
+
+    for profile in profiles {
+        for text in ["ABC\u{1D}%DEF", "A\u{1D}\u{1D}B", "%\u{1D}", "%%"] {
+            verify_text(text, profile, true, false);
+            verify_bytes(text.as_bytes(), profile, true);
+        }
+    }
+}
+
+// Every character the Shift JIS conversion accepts must decode back to itself.
+#[cfg(feature = "kanji")]
+#[test]
+fn shift_jis_encoding_round_trips_every_accepted_character() {
+    for value in 0..=u32::from(char::MAX) {
+        let Some(character) = char::from_u32(value) else {
+            continue;
+        };
+        let Some((bytes, length)) = super::super::shift_jis_encoding(character) else {
+            continue;
+        };
+
+        let (decoded, _, had_errors) = encoding_rs::SHIFT_JIS.decode(&bytes[..length]);
+        let mut buffer = [0; 4];
+        let expected: &str = character.encode_utf8(&mut buffer);
+
+        assert!(!had_errors, "{character:?} decodes with errors");
+        assert_eq!(expected, decoded.as_ref(), "{character:?} does not round-trip");
+    }
+}
+
+#[cfg(feature = "kanji")]
+#[test]
+fn minus_sign_keeps_its_character_across_eci_transitions() {
+    for profile in profiles() {
+        for text in ["−", "－", "日本語−日本語", "ﾃｽﾄ−ﾃｽﾄ"] {
+            verify_text(text, profile, false, false);
+        }
+    }
 }
 
 // Every short input over a charset covering all modes and interpretations is bit-optimal.
@@ -378,8 +493,10 @@ fn text_plans_are_bit_optimal_for_all_short_inputs() {
         layer = next;
     }
 
+    let profiles = profiles();
+
     for input in &inputs {
-        for profile in profiles() {
+        for &profile in &profiles {
             for fnc1 in [false, true] {
                 for force_initial_eci in [false, true] {
                     verify_text(input, profile, fnc1, force_initial_eci);
@@ -440,8 +557,10 @@ fn byte_plans_are_bit_optimal_for_all_short_inputs() {
         layer = next;
     }
 
+    let profiles = profiles();
+
     for input in &inputs {
-        for profile in profiles() {
+        for &profile in &profiles {
             for fnc1 in [false, true] {
                 verify_bytes(input, profile, fnc1);
             }

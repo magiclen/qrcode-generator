@@ -185,6 +185,18 @@ fn utf8_binary_fnc1_and_explicit_segments_round_trip() {
     assert_eq!("12345abc", decode_square(image, size));
 }
 
+// A separator next to another separator or a percent still reads back, because the segment ends between them.
+#[test]
+fn fnc1_adjacent_separators_and_percents_round_trip() {
+    let encoder = Encoder::new(ErrorCorrection::Medium).fnc1(Some(Fnc1::Gs1));
+
+    for text in ["ABC\u{1D}%DEF", "A\u{1D}\u{1D}B", "ABC%\u{1D}DEF", "ABC%%DEF"] {
+        for symbol in [encoder.encode_text(text).unwrap(), encoder.encode_bytes(text).unwrap()] {
+            assert_eq!(text, super::common::decode_fnc1(&symbol));
+        }
+    }
+}
+
 // Kanji text is stored in Kanji mode and read back unchanged.
 #[cfg(feature = "kanji")]
 #[test]
@@ -194,6 +206,12 @@ fn kanji_mode_round_trips() {
     let (image, size) = render_square(&symbol, 8);
 
     assert_eq!(text, decode_model2(image, size).getText());
+
+    for text in ["−", "－", "−日本語", "−ﾃｽﾄ"] {
+        let symbol = Encoder::new(ErrorCorrection::Medium).encode_text(text).unwrap();
+        let (image, size) = render_square(&symbol, 8);
+        assert_eq!(text, decode_square(image, size));
+    }
 }
 
 // Text mixing UTF-8 and Shift JIS data declares each interpretation explicitly and still decodes.

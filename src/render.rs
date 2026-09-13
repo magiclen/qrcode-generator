@@ -278,10 +278,9 @@ impl<'a> Renderer<'a> {
     #[cfg(feature = "image")]
     /// Writes a grayscale PNG image to a writer.
     pub fn write_png<W: IoWrite>(self, writer: W) -> Result<(), RenderError> {
-        let image = self.to_luma8()?;
-
         let width = u32::try_from(self.width).map_err(|_| RenderError::ImageSizeTooLarge)?;
         let height = u32::try_from(self.height).map_err(|_| RenderError::ImageSizeTooLarge)?;
+        let image = self.to_luma8()?;
 
         PngEncoder::new_with_quality(writer, CompressionType::Best, FilterType::NoFilter)
             .write_image(&image, width, height, ColorType::L8.into())?;
@@ -338,10 +337,9 @@ impl<'a> Renderer<'a> {
     #[cfg(feature = "image")]
     /// Renders a grayscale image buffer.
     pub fn to_image_buffer(self) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>, RenderError> {
-        let image = self.to_luma8()?;
-
         let width = u32::try_from(self.width).map_err(|_| RenderError::ImageSizeTooLarge)?;
         let height = u32::try_from(self.height).map_err(|_| RenderError::ImageSizeTooLarge)?;
+        let image = self.to_luma8()?;
 
         ImageBuffer::from_vec(width, height, image).ok_or(RenderError::ImageSizeTooLarge)
     }

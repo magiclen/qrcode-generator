@@ -228,30 +228,26 @@ impl TextTables {
 }
 
 // Reports Kanji mode eligibility and the ECI 20 byte segment length of a character with one Shift JIS conversion.
-// Backslash, tilde, yen and overline are rejected because WHATWG and JIS X 0201 decode bytes 5C and 7E differently.
 #[cfg(feature = "kanji")]
 fn sjis_classification(character: char) -> (bool, Option<usize>) {
     match character {
-        '\\' | '~' | '¥' | '\u{203E}' => (false, None),
+        // The ASCII arm below would report one byte, but JIS X 0201 readers decode 5C and 7E as yen and overline.
+        '\\' | '~' => (false, None),
         _ if character.is_ascii() => (false, Some(1)),
         '\u{FF61}'..='\u{FF9F}' => (false, Some(1)),
         _ => {
-            let mut utf8 = [0; 4];
-            let text = character.encode_utf8(&mut utf8);
-            let (encoded, _, had_errors) = encoding_rs::SHIFT_JIS.encode(text);
-
-            if had_errors {
+            let Some((encoded, length)) = super::shift_jis_encoding(character) else {
                 return (false, None);
-            }
+            };
 
             // Kanji mode covers exactly the two-byte values inside the two compactable Shift JIS ranges.
-            let kanji = encoded.len() == 2
+            let kanji = length == 2
                 && matches!(
                     u16::from_be_bytes([encoded[0], encoded[1]]),
                     0x8140..=0x9FFC | 0xE040..=0xEBBF
                 );
 
-            (kanji, Some(encoded.len()))
+            (kanji, Some(length))
         },
     }
 }
@@ -505,6 +501,19 @@ pub(crate) fn text(
 
         if position == length {
             break;
+        }
+
+        // A GS must end an alphanumeric percent run, or the reader pairs it with the next percent.
+        if fnc1
+            && position > 0
+            && text.as_bytes()[tables.offsets[position - 1]] == 0x1D
+            && matches!(text.as_bytes()[tables.offsets[position]], 0x1D | b'%')
+        {
+            for queues in &mut alnum_queues {
+                for queue in queues {
+                    queue.clear();
+                }
+            }
         }
 
         let default_bits = best[position][Interpretation::Default.index()].map(|step| step.bits);
@@ -887,6 +896,13 @@ pub(crate) fn bytes(
         let digit = byte.is_ascii_digit();
         let alnum = alphanumeric_value(byte).is_some() || (fnc1 && byte == 0x1D);
 
+        // Start a new segment before a percent that would combine with the preceding GS.
+        if fnc1 && position > 0 && data[position - 1] == 0x1D && matches!(byte, 0x1D | b'%') {
+            for queue in &mut alnum_queues {
+                queue.clear();
+            }
+        }
+
         // A start only enters a queue when its mode can extend through the byte at this position.
         if let Some(step) = best[position] {
             let bits = step.bits as isize;
@@ -1057,6 +1073,6 @@ const fn alphanumeric_bits(count: usize) -> usize {
     count / 2 * 11 + count % 2 * 6
 }
 
-#[cfg(all(test, feature = "qr"))]
+#[cfg(test)]
 #[path = "optimizer_tests.rs"]
 mod tests;

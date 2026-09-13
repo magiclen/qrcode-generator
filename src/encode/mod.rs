@@ -837,16 +837,31 @@ impl Segment {
 }
 
 #[cfg(feature = "kanji")]
-fn kanji_encoding(character: char) -> Option<(u16, [u8; 2])> {
+fn shift_jis_encoding(character: char) -> Option<([u8; 2], usize)> {
+    // WHATWG maps these onto bytes that read back as another character, so they cannot round-trip.
+    if matches!(character, '¥' | '\u{203E}' | '\u{2212}') {
+        return None;
+    }
+
     let mut utf8 = [0; 4];
     let text = character.encode_utf8(&mut utf8);
     let (encoded, _, had_errors) = encoding_rs::SHIFT_JIS.encode(text);
 
-    if had_errors || encoded.len() != 2 {
+    if had_errors || encoded.is_empty() || encoded.len() > 2 {
         return None;
     }
 
-    let bytes = [encoded[0], encoded[1]];
+    Some(([encoded[0], encoded.get(1).copied().unwrap_or(0)], encoded.len()))
+}
+
+#[cfg(feature = "kanji")]
+fn kanji_encoding(character: char) -> Option<(u16, [u8; 2])> {
+    let (bytes, length) = shift_jis_encoding(character)?;
+
+    if length != 2 {
+        return None;
+    }
+
     let value = u16::from_be_bytes(bytes);
 
     // The two valid Shift JIS ranges are shifted into one compact 13-bit index space.
@@ -1235,6 +1250,19 @@ impl QrEncoder {
     }
 
     /// Encodes caller-selected segment parts as one Structured Append sequence.
+    ///
+    /// Each part must include its own ECI headers before the data that needs them; ECI state is not copied from earlier parts.
+    ///
+    /// ```rust
+    /// use qrcode_generator::{Segment, qr::{EciAssignment, Encoder, ErrorCorrection}};
+    ///
+    /// let first = [Segment::eci(EciAssignment::UTF_8), Segment::bytes("café".as_bytes())];
+    /// let second = [Segment::eci(EciAssignment::UTF_8), Segment::bytes("世界".as_bytes())];
+    /// let symbols = Encoder::new(ErrorCorrection::Medium)
+    ///     .encode_structured_append_segments(&[&first, &second])
+    ///     .unwrap();
+    /// assert_eq!(2, symbols.len());
+    /// ```
     pub fn encode_structured_append_segments(
         &self,
         parts: &[&[Segment]],
@@ -1830,7 +1858,15 @@ impl RmqrEncoder {
             segments
         };
 
-        self.encode_optimized(|_| Ok(segments.to_vec()))
+        self.encode_candidates(|version| {
+            rmqr::encode(
+                segments,
+                version,
+                self.error_correction,
+                self.boost_error_correction,
+                self.fnc1,
+            )
+        })
     }
 
     fn input_capacity_upper_bound(&self) -> Result<(usize, usize), EncodeError> {
@@ -1856,14 +1892,13 @@ impl RmqrEncoder {
         result.ok_or(EncodeError::InvalidVersionRange)
     }
 
+    // Segments are planned once per character count indicator profile, because versions sharing one profile share their plan.
     fn encode_optimized<F>(&self, mut optimize: F) -> Result<Symbol, EncodeError>
     where
         F: FnMut(RmqrVersion) -> Result<Vec<Segment>, EncodeError>, {
-        let versions = self.candidates()?;
         let mut cache: Vec<([u8; 4], Vec<Segment>)> = Vec::with_capacity(15);
-        let mut last_error = None;
 
-        for version in versions {
+        self.encode_candidates(|version| {
             let profile = rmqr::cci(version);
             let index = match cache.iter().position(|(cci, _)| *cci == profile) {
                 Some(index) => index,
@@ -1873,13 +1908,25 @@ impl RmqrEncoder {
                 },
             };
 
-            match rmqr::encode(
+            rmqr::encode(
                 &cache[index].1,
                 version,
                 self.error_correction,
                 self.boost_error_correction,
                 self.fnc1,
-            ) {
+            )
+        })
+    }
+
+    // Tries every candidate version in area order and keeps the last capacity error for the caller.
+    fn encode_candidates<F>(&self, mut encode: F) -> Result<Symbol, EncodeError>
+    where
+        F: FnMut(RmqrVersion) -> Result<Symbol, EncodeError>, {
+        let versions = self.candidates()?;
+        let mut last_error = None;
+
+        for version in versions {
+            match encode(version) {
                 Ok(symbol) => return Ok(symbol),
                 Err(
                     error @ EncodeError::DataTooLong {
@@ -1963,11 +2010,9 @@ impl MicroEncoder {
     /// Encodes raw bytes with globally optimized modes supported by each candidate version.
     pub fn encode_bytes(&self, data: impl AsRef<[u8]>) -> Result<Symbol, EncodeError> {
         let data = data.as_ref();
-        if let Some((version, capacity, capacity_bits)) = self.input_capacity_upper_bound()?
-            && micro_bytes_are_representable(data, version)
-        {
-            ensure_input_length(data.len(), capacity, capacity_bits, 1)?;
-        }
+        let (version, capacity, capacity_bits) = self.input_capacity_upper_bound()?;
+
+        micro::check_bytes(data, version, capacity, capacity_bits)?;
 
         self.encode_range(|version| micro::optimize(data, version))
     }
@@ -1975,13 +2020,10 @@ impl MicroEncoder {
     /// Encodes text with globally optimized modes supported by each candidate version.
     pub fn encode_text(&self, text: impl AsRef<str>) -> Result<Symbol, EncodeError> {
         let text = text.as_ref();
-        if let Some((version, capacity, capacity_bits)) = self.input_capacity_upper_bound()?
-            && micro_text_is_representable_without_kanji(text, version)
-        {
-            ensure_input_length(text.chars().count(), capacity, capacity_bits, 1)?;
-        }
+        let (version, capacity, capacity_bits) = self.input_capacity_upper_bound()?;
+        let input = micro::Text::new(text, version, capacity, capacity_bits)?;
 
-        self.encode_range(|version| micro::optimize_text(text, version))
+        self.encode_range(|version| micro::optimize_text(&input, version))
     }
 
     /// Encodes a value after converting it to its QR Code text representation.
@@ -1999,19 +2041,22 @@ impl MicroEncoder {
         self.encode_range(|_| Ok(segments.to_vec()))
     }
 
-    fn input_capacity_upper_bound(
-        &self,
-    ) -> Result<Option<(MicroVersion, usize, usize)>, EncodeError> {
+    // Returns the candidate version holding the most characters, which is also the most permissive one.
+    fn input_capacity_upper_bound(&self) -> Result<(MicroVersion, usize, usize), EncodeError> {
         if self.versions.start() > self.versions.end() {
             return Err(EncodeError::InvalidVersionRange);
         }
 
-        Ok(micro_versions(self.versions.clone())
+        micro_versions(self.versions.clone())
             .filter_map(|version| {
                 micro::input_capacity_upper_bound(version, self.error_correction)
                     .map(|(capacity, capacity_bits)| (version, capacity, capacity_bits))
             })
-            .max_by_key(|&(_, capacity, _)| capacity))
+            .max_by_key(|&(_, capacity, _)| capacity)
+            .ok_or(EncodeError::UnsupportedErrorCorrection {
+                version:          SymbolVersion::Micro(*self.versions.end()),
+                error_correction: self.error_correction.into(),
+            })
     }
 
     fn encode_range<F>(&self, mut segments: F) -> Result<Symbol, EncodeError>
@@ -2025,6 +2070,14 @@ impl MicroEncoder {
 
         // Unsupported modes and error correction levels eliminate only the current candidate version.
         for version in micro_versions(self.versions.clone()) {
+            if micro::input_capacity_upper_bound(version, self.error_correction).is_none() {
+                last_error = Some(EncodeError::UnsupportedErrorCorrection {
+                    version:          SymbolVersion::Micro(version),
+                    error_correction: self.error_correction.into(),
+                });
+                continue;
+            }
+
             let result = segments(version).and_then(|segments| {
                 micro::encode(
                     &segments,
@@ -2046,7 +2099,7 @@ impl MicroEncoder {
     }
 }
 
-/// Tries a configured Micro QR Code encoder before a configured Model 2 QR Code encoder.
+/// Tries a configured Micro QR Code encoder before a configured Model 2 QR Code encoder, unless the Model 2 encoder requires FNC1.
 #[cfg(all(feature = "qr", feature = "micro-qr"))]
 #[derive(Clone, Debug)]
 pub struct AutoEncoder {
@@ -2068,6 +2121,9 @@ impl AutoEncoder {
     /// Encodes raw bytes using the smallest eligible symbol family.
     pub fn encode_bytes(&self, data: impl AsRef<[u8]>) -> Result<Symbol, EncodeError> {
         let data = data.as_ref();
+        if self.qr.fnc1.is_some() {
+            return self.qr.encode_bytes(data);
+        }
         match self.micro.encode_bytes(data) {
             Ok(symbol) => Ok(symbol),
             Err(error) if candidate_rejection(&error) => self.qr.encode_bytes(data),
@@ -2078,6 +2134,9 @@ impl AutoEncoder {
     /// Encodes text using the smallest eligible symbol family.
     pub fn encode_text(&self, text: impl AsRef<str>) -> Result<Symbol, EncodeError> {
         let text = text.as_ref();
+        if self.qr.fnc1.is_some() {
+            return self.qr.encode_text(text);
+        }
         match self.micro.encode_text(text) {
             Ok(symbol) => Ok(symbol),
             Err(error) if candidate_rejection(&error) => self.qr.encode_text(text),
@@ -2097,6 +2156,9 @@ impl AutoEncoder {
 
     /// Encodes explicit segments using the smallest eligible symbol family.
     pub fn encode_segments(&self, segments: &[Segment]) -> Result<Symbol, EncodeError> {
+        if self.qr.fnc1.is_some() {
+            return self.qr.encode_segments(segments);
+        }
         match self.micro.encode_segments(segments) {
             Ok(symbol) => Ok(symbol),
             Err(error) if candidate_rejection(&error) => self.qr.encode_segments(segments),
@@ -2234,28 +2296,6 @@ fn micro_versions(versions: RangeInclusive<MicroVersion>) -> impl Iterator<Item 
     [MicroVersion::M1, MicroVersion::M2, MicroVersion::M3, MicroVersion::M4]
         .into_iter()
         .filter(move |version| *version >= start && *version <= end)
-}
-
-#[cfg(feature = "micro-qr")]
-fn micro_bytes_are_representable(data: &[u8], version: MicroVersion) -> bool {
-    match version {
-        MicroVersion::M1 => data.iter().all(u8::is_ascii_digit),
-        MicroVersion::M2 => data.iter().all(|byte| alphanumeric_value(*byte).is_some()),
-        MicroVersion::M3 | MicroVersion::M4 => true,
-    }
-}
-
-#[cfg(feature = "micro-qr")]
-fn micro_text_is_representable_without_kanji(text: &str, version: MicroVersion) -> bool {
-    match version {
-        MicroVersion::M1 => text.bytes().all(|byte| byte.is_ascii_digit()),
-        MicroVersion::M2 => {
-            text.is_ascii() && text.bytes().all(|byte| alphanumeric_value(byte).is_some())
-        },
-        MicroVersion::M3 | MicroVersion::M4 => {
-            text.chars().all(|character| u32::from(character) <= 0xFF)
-        },
-    }
 }
 
 #[cfg(feature = "micro-qr")]

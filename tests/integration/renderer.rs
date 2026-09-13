@@ -182,6 +182,20 @@ fn png_and_image_buffer_match_requested_dimensions() {
     assert_eq!(png, written);
 }
 
+#[cfg(all(feature = "image", target_pointer_width = "64"))]
+// An output wider than an image dimension is rejected before the pixel buffer is allocated.
+#[test]
+fn image_dimensions_are_checked_before_allocating_pixels() {
+    let symbol = symbol();
+    let renderer = Renderer::new_with_dimensions(&symbol, u32::MAX as usize + 1, 128);
+
+    assert!(matches!(renderer.to_png_vec(), Err(qrcode_generator::RenderError::ImageSizeTooLarge)));
+    assert!(matches!(
+        renderer.to_image_buffer(),
+        Err(qrcode_generator::RenderError::ImageSizeTooLarge)
+    ));
+}
+
 // The save APIs write a real SVG and PNG file to disk.
 #[cfg(feature = "std")]
 #[test]

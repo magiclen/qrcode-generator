@@ -98,7 +98,7 @@ impl BitBuffer {
         self.len += 1;
     }
 
-    #[cfg(any(feature = "micro-qr", feature = "rmqr"))]
+    #[cfg(any(all(test, feature = "qr"), feature = "micro-qr", feature = "rmqr"))]
     #[inline]
     pub(crate) fn bit(&self, index: usize) -> bool {
         debug_assert!(index < self.len);

@@ -202,6 +202,12 @@ fn kanji_mode_round_trips() {
     let (image, width, height) = render_rmqr(&symbol, 8);
 
     assert_eq!(text, decode_rmqr_pure(image, width, height, "Kanji").getText());
+
+    for text in ["−", "－", "−日本語", "−ﾃｽﾄ"] {
+        let symbol = Encoder::new(ErrorCorrection::Medium).encode_text(text).unwrap();
+        let (image, width, height) = render_rmqr(&symbol, 8);
+        assert_eq!(text, decode_rmqr_pure(image, width, height, text).getText());
+    }
 }
 
 // Text mixing UTF-8 and Shift JIS data declares each interpretation explicitly and still decodes.

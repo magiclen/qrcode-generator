@@ -289,6 +289,8 @@ let symbol = encoder.encode_text("HELLO 123").unwrap();
 # }
 ```
 
+If the Model 2 encoder has FNC1 enabled, `AutoEncoder` uses it directly because Micro QR Code cannot carry FNC1.
+
 ## FNC1 and Structured Append
 
 These two QR Code features serve data-exchange standards rather than plain text.
@@ -308,6 +310,8 @@ let symbol = Encoder::new(ErrorCorrection::Medium)
 # }
 ```
 
+Alphanumeric mode has no value for `0x1D`, so the encoder writes a separator as `%` and doubles a literal `%` to `%%`. It also starts a new segment when a separator is followed by another separator or by a literal `%`, because a reader would otherwise pair those two characters into one literal `%`. Byte mode stores both characters unchanged.
+
 *Structured Append* spreads one message across up to 16 symbols that a reader stitches back together. You can supply the parts yourself, or let the encoder split a message automatically:
 
 ```rust,no_run
@@ -324,9 +328,13 @@ println!("{} symbols", symbols.len());
 
 Automatic splitting first minimizes the number of symbols, then their largest version, and finally the total symbol area.
 
+With `encode_structured_append_segments`, each part must include its own ECI headers before the data that needs them; ECI state is not copied from earlier parts.
+
 ## Kanji
 
 The optional `kanji` feature adds full Shift JIS support to automatic text segmentation and exposes `Segment::kanji`. Eligible characters use the compact 13-bit Kanji mode, and other Shift JIS text such as half-width katakana can be stored as Shift JIS bytes behind an ECI 000020 header. Following the strict ECI rules of ISO/IEC 18004, Kanji mode is only used while the default interpretation or an explicit Shift JIS ECI is in force, so inputs mixing UTF-8 and Kanji data stay readable for strict ECI decoders. The feature is off by default for the widest scanner compatibility.
+
+Text must keep its original characters after decoding. For example, U+2212 (minus sign) cannot use Shift JIS because it decodes as U+FF0D (fullwidth hyphen-minus). QR Code and rMQR use UTF-8 for this character, while Micro QR Code and `Segment::kanji` reject it.
 
 ## Cargo features
 

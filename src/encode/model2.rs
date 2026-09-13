@@ -524,7 +524,8 @@ const fn version_bits(version: QrVersion) -> u32 {
 }
 
 fn line_penalty(values: &[bool]) -> i32 {
-    // The 1:1:3:1:1 finder-like pattern scores on each side with a light area of four modules.
+    // The 1:1:3:1:1 finder-like pattern scores on each side with a light area of four modules, following Table 11 rather than the "more than four" wording of Note 3.
+    // Only the fixed module pattern is matched; scaled patterns are not counted.
     // The rolling window carries four virtual light modules on each end, standing in for the quiet zone.
     const LEFT_LIGHT_PATTERN: u16 = 0b00001011101;
     const RIGHT_LIGHT_PATTERN: u16 = 0b10111010000;

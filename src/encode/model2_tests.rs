@@ -1,6 +1,23 @@
-// Executable checks for the source ambiguities recorded in iso-iec-18004-2024/09_known_issues_and_ambiguities.md.
+// Executable checks for the source ambiguities recorded in iso-iec-18004-2024/ISSUES.md.
 
 use super::*;
+
+#[test]
+fn n3_uses_four_light_modules_and_counts_each_side() {
+    for (line, expected) in [
+        ("100010111011", 0),
+        ("1000010111011", PENALTY_N3),
+        ("10111011", PENALTY_N3),
+        ("11011101", PENALTY_N3),
+        ("1011101", 2 * PENALTY_N3),
+        ("000010111010000", 2 * PENALTY_N3),
+        // The scaled pattern has 16 N1 points from long runs, but no N3 match.
+        ("000000001100111111001100000000", 16),
+    ] {
+        let modules: Vec<bool> = line.bytes().map(|byte| byte == b'1').collect();
+        assert_eq!(expected, line_penalty(&modules), "line {line}");
+    }
+}
 
 // the Annex I example resolves to data mask 010, so ECL M with mask 2 yields format value 0x5E7C.
 #[test]

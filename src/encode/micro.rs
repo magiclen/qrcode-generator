@@ -107,8 +107,94 @@ pub(crate) fn optimize(data: &[u8], version: MicroVersion) -> Result<Vec<Segment
         .collect()
 }
 
+pub(crate) struct Text<'a> {
+    text:    &'a str,
+    offsets: Vec<usize>,
+    #[cfg(feature = "kanji")]
+    kanji:   Vec<bool>,
+}
+
+impl<'a> Text<'a> {
+    pub(crate) fn new(
+        text: &'a str,
+        version: MicroVersion,
+        capacity: usize,
+        capacity_bits: usize,
+    ) -> Result<Self, EncodeError> {
+        let mut offsets = Vec::with_capacity(text.len().min(capacity) + 1);
+        #[cfg(feature = "kanji")]
+        let mut kanji = Vec::with_capacity(text.len().min(capacity));
+
+        for (offset, character) in text.char_indices() {
+            #[cfg(feature = "kanji")]
+            let is_kanji = version >= MicroVersion::M3 && kanji_encoding(character).is_some();
+            #[cfg(not(feature = "kanji"))]
+            let is_kanji = false;
+
+            let representable = match version {
+                MicroVersion::M1 => character.is_ascii_digit(),
+                MicroVersion::M2 => {
+                    character.is_ascii() && alphanumeric_value(character as u8).is_some()
+                },
+                MicroVersion::M3 | MicroVersion::M4 => u32::from(character) <= 0xFF || is_kanji,
+            };
+
+            if !representable {
+                return Err(EncodeError::TextNotRepresentable {
+                    byte_offset: offset,
+                    family:      "Micro QR Code",
+                });
+            }
+
+            // Numeric mode is the densest, so one character past the capacity already rules out every version.
+            super::ensure_input_length(offsets.len() + 1, capacity, capacity_bits, 1)?;
+
+            offsets.push(offset);
+            #[cfg(feature = "kanji")]
+            kanji.push(is_kanji);
+        }
+
+        offsets.push(text.len());
+
+        Ok(Self {
+            text,
+            offsets,
+            #[cfg(feature = "kanji")]
+            kanji,
+        })
+    }
+}
+
+// Rejects an input no candidate version can hold before the byte optimizer builds its table.
+pub(crate) fn check_bytes(
+    data: &[u8],
+    version: MicroVersion,
+    capacity: usize,
+    capacity_bits: usize,
+) -> Result<(), EncodeError> {
+    for (offset, &byte) in data.iter().enumerate() {
+        let representable = match version {
+            MicroVersion::M1 => byte.is_ascii_digit(),
+            MicroVersion::M2 => alphanumeric_value(byte).is_some(),
+            MicroVersion::M3 | MicroVersion::M4 => true,
+        };
+
+        if !representable {
+            return Err(EncodeError::TextNotRepresentable {
+                byte_offset: offset,
+                family:      "Micro QR Code",
+            });
+        }
+
+        // Numeric mode is the densest, so one byte past the capacity already rules out every version.
+        super::ensure_input_length(offset + 1, capacity, capacity_bits, 1)?;
+    }
+
+    Ok(())
+}
+
 pub(crate) fn optimize_text(
-    text: &str,
+    input: &Text<'_>,
     version: MicroVersion,
 ) -> Result<Vec<Segment>, EncodeError> {
     #[derive(Clone, Copy)]
@@ -119,15 +205,12 @@ pub(crate) fn optimize_text(
         mode:     Mode,
     }
 
-    let mut offsets: Vec<_> = text.char_indices().map(|(offset, _)| offset).collect();
-
-    offsets.push(text.len());
-
+    let text = input.text;
+    let offsets = &input.offsets;
     let length = offsets.len() - 1;
 
     #[cfg(feature = "kanji")]
-    let kanji: Vec<bool> =
-        text.chars().map(|character| kanji_encoding(character).is_some()).collect();
+    let kanji = &input.kanji;
 
     // Scalar boundaries keep multibyte UTF-8 characters intact while evaluating Kanji mode.
     let mut best = vec![None; length + 1];
@@ -334,17 +417,12 @@ pub(crate) fn encode(
         let mut best_score = -1;
 
         for candidate in 0..4 {
-            matrix.apply_mask(candidate);
-
-            // The score only reads the right column and bottom row, which never hold format modules.
-            let score = matrix.score();
+            let score = matrix.score(candidate);
 
             if score > best_score {
                 best_mask = candidate;
                 best_score = score;
             }
-
-            matrix.apply_mask(candidate);
         }
 
         best_mask
@@ -584,17 +662,9 @@ impl Matrix {
     fn apply_mask(&mut self, mask: u8) {
         for y in 0..self.size {
             for x in 0..self.size {
-                let invert = match mask {
-                    0 => y % 2 == 0,
-                    1 => (y / 2 + x / 3) % 2 == 0,
-                    2 => (y * x % 2 + y * x % 3) % 2 == 0,
-                    3 => ((y + x) % 2 + y * x % 3) % 2 == 0,
-                    _ => unreachable!(),
-                };
-
                 let index = y * self.size + x;
 
-                if invert && !self.function[index] {
+                if mask_inverts(mask, x, y) && !self.function[index] {
                     self.modules[index] = !self.modules[index];
                 }
             }
@@ -614,15 +684,19 @@ impl Matrix {
         }
     }
 
-    fn score(&self) -> i32 {
-        // The smaller edge count is the high-order part so balanced dark edges score better.
-        let right =
-            (1..self.size).filter(|&y| self.modules[y * self.size + self.size - 1]).count() as i32;
-
-        let bottom = (1..self.size)
-            .filter(|&x| self.modules[(self.size - 1) * self.size + x])
+    // Scores one candidate on the unmasked matrix, because only two edges are read.
+    // Past the first module, neither edge holds a function module, so the mask applies to every module counted here.
+    fn score(&self, mask: u8) -> i32 {
+        let last = self.size - 1;
+        let right = (1..self.size)
+            .filter(|&y| self.modules[y * self.size + last] != mask_inverts(mask, last, y))
             .count() as i32;
 
+        let bottom = (1..self.size)
+            .filter(|&x| self.modules[last * self.size + x] != mask_inverts(mask, x, last))
+            .count() as i32;
+
+        // The smaller edge count is the high-order part so balanced dark edges score better.
         16 * right.min(bottom) + right.max(bottom)
     }
 
@@ -632,6 +706,17 @@ impl Matrix {
 
         self.modules[index] = value;
         self.function[index] = true;
+    }
+}
+
+#[inline]
+const fn mask_inverts(mask: u8, x: usize, y: usize) -> bool {
+    match mask {
+        0 => y.is_multiple_of(2),
+        1 => (y / 2 + x / 3).is_multiple_of(2),
+        2 => (y * x % 2 + y * x % 3).is_multiple_of(2),
+        3 => ((y + x) % 2 + y * x % 3).is_multiple_of(2),
+        _ => unreachable!(),
     }
 }
 
