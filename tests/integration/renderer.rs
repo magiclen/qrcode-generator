@@ -148,6 +148,22 @@ fn svg_memory_rendering_accepts_all_description_forms() {
     assert!(renderer.to_svg_string(None::<&str>).unwrap().contains("by magiclen.org</desc>"));
 }
 
+#[test]
+fn svg_xml_declaration_can_be_disabled() {
+    let symbol = symbol();
+    let renderer = Renderer::new(&symbol, 256);
+    let default = renderer.to_svg_string(None::<&str>).unwrap();
+    let enabled = renderer.svg_xml_declaration(true).to_svg_string(None::<&str>).unwrap();
+    let disabled = renderer.svg_xml_declaration(false).to_svg_string(None::<&str>).unwrap();
+
+    assert_eq!(default, enabled);
+    assert!(disabled.starts_with("<svg "));
+    assert_eq!(
+        default.strip_prefix("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n").unwrap(),
+        disabled
+    );
+}
+
 // The synchronous writer produces the same bytes as in-memory SVG rendering.
 #[cfg(feature = "std")]
 #[test]
@@ -155,11 +171,14 @@ fn synchronous_svg_writer_matches_memory_rendering() {
     let symbol = symbol();
     let renderer = Renderer::new_with_dimensions(&symbol, 256, 128);
 
-    for description in [None::<&str>, Some("plain"), Some("<&>")] {
-        let expected = renderer.to_svg_string(description).unwrap();
-        let mut actual = Vec::new();
-        renderer.write_svg(&mut actual, description).unwrap();
-        assert_eq!(expected.as_bytes(), actual);
+    for enabled in [true, false] {
+        let renderer = renderer.svg_xml_declaration(enabled);
+        for description in [None::<&str>, Some("plain"), Some("<&>")] {
+            let expected = renderer.to_svg_string(description).unwrap();
+            let mut actual = Vec::new();
+            renderer.write_svg(&mut actual, description).unwrap();
+            assert_eq!(expected.as_bytes(), actual);
+        }
     }
 }
 
@@ -209,8 +228,14 @@ fn save_apis_write_to_temporary_paths() {
     ));
     let svg_path = base.with_extension("svg");
 
-    renderer.save_svg(&svg_path, Some("saved")).unwrap();
-    assert!(std::fs::read_to_string(&svg_path).unwrap().contains("<desc>saved</desc>"));
+    for enabled in [true, false] {
+        let renderer = renderer.svg_xml_declaration(enabled);
+        renderer.save_svg(&svg_path, Some("saved")).unwrap();
+        assert_eq!(
+            renderer.to_svg_string(Some("saved")).unwrap(),
+            std::fs::read_to_string(&svg_path).unwrap()
+        );
+    }
     std::fs::remove_file(svg_path).unwrap();
 
     #[cfg(feature = "image")]
@@ -228,12 +253,6 @@ fn save_apis_write_to_temporary_paths() {
 async fn tokio_writers_and_savers_match_the_synchronous_apis() {
     let symbol = symbol();
     let renderer = Renderer::new_with_dimensions(&symbol, 256, 128);
-    let svg = renderer.to_svg_string(Some("async")).unwrap();
-
-    let mut async_svg = Vec::new();
-    renderer.write_svg_async(&mut async_svg, Some(String::from("async"))).await.unwrap();
-    assert_eq!(svg.as_bytes(), async_svg);
-
     let base = std::env::temp_dir().join(format!(
         "qrcode-generator-tokio-{}-{:?}",
         std::process::id(),
@@ -241,8 +260,15 @@ async fn tokio_writers_and_savers_match_the_synchronous_apis() {
     ));
 
     let svg_path = base.with_extension("svg");
-    renderer.save_svg_async(&svg_path, Some("async")).await.unwrap();
-    assert_eq!(svg.as_bytes(), std::fs::read(&svg_path).unwrap());
+    for enabled in [true, false] {
+        let renderer = renderer.svg_xml_declaration(enabled);
+        let svg = renderer.to_svg_string(Some("async")).unwrap();
+        let mut async_svg = Vec::new();
+        renderer.write_svg_async(&mut async_svg, Some(String::from("async"))).await.unwrap();
+        assert_eq!(svg.as_bytes(), async_svg);
+        renderer.save_svg_async(&svg_path, Some("async")).await.unwrap();
+        assert_eq!(svg.as_bytes(), std::fs::read(&svg_path).unwrap());
+    }
     std::fs::remove_file(svg_path).unwrap();
 
     #[cfg(feature = "image")]

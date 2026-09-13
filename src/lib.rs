@@ -167,11 +167,16 @@ use qrcode_generator::{Renderer, qr::{Encoder, ErrorCorrection}};
 
 let symbol = Encoder::new(ErrorCorrection::Low).encode_text("Hello").unwrap();
 
-let svg: String = Renderer::new(&symbol, 512).to_svg_string(None::<&str>).unwrap();
+let svg: String = Renderer::new(&symbol, 512)
+    .svg_xml_declaration(false)
+    .to_svg_string(None::<&str>)
+    .unwrap();
 let pixels: Vec<u8> = Renderer::new(&symbol, 512).to_luma8().unwrap();
 # let _ = (svg, pixels);
 # }
 ```
+
+SVG output includes an XML declaration by default. Use `svg_xml_declaration(false)` to start the output with `<svg>` instead. This setting applies to strings, writers and saved files, including async output.
 
 The renderer also implements `Display`, drawing the symbol as compact Unicode text that packs two module rows into every line through half block characters, including the quiet zone. The default form draws dark modules as visible blocks; the alternate form (`{:#}`) draws light modules instead, which keeps the standard contrast on dark terminal backgrounds. Text output works in module units, so the pixel size passed to the renderer does not affect it:
 

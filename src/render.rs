@@ -21,10 +21,11 @@ use crate::{RenderError, Symbol, SymbolVersion};
 /// Renders an encoded symbol at exact output dimensions.
 #[derive(Clone, Copy, Debug)]
 pub struct Renderer<'a> {
-    symbol:     &'a Symbol,
-    width:      usize,
-    height:     usize,
-    quiet_zone: usize,
+    symbol:              &'a Symbol,
+    width:               usize,
+    height:              usize,
+    quiet_zone:          usize,
+    svg_xml_declaration: bool,
 }
 
 impl<'a> Renderer<'a> {
@@ -51,6 +52,7 @@ impl<'a> Renderer<'a> {
             width,
             height,
             quiet_zone,
+            svg_xml_declaration: true,
         }
     }
 
@@ -59,6 +61,16 @@ impl<'a> Renderer<'a> {
     #[inline]
     pub const fn quiet_zone(mut self, modules: usize) -> Self {
         self.quiet_zone = modules;
+
+        self
+    }
+
+    /// Sets whether SVG output starts with an XML declaration; enabled by default.
+    /// This setting applies to all SVG string, writer and file output methods.
+    #[must_use]
+    #[inline]
+    pub const fn svg_xml_declaration(mut self, enabled: bool) -> Self {
+        self.svg_xml_declaration = enabled;
 
         self
     }
@@ -158,9 +170,13 @@ impl<'a> Renderer<'a> {
         description: Option<&str>,
         layout: Layout,
     ) -> fmt::Result {
-        write!(
+        if self.svg_xml_declaration {
+            writer.write_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")?;
+        }
+
+        writeln!(
             writer,
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg width=\"{}\" height=\"{}\" shape-rendering=\"crispEdges\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\">\n",
+            "<svg width=\"{}\" height=\"{}\" shape-rendering=\"crispEdges\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\">",
             self.width, self.height
         )?;
 
