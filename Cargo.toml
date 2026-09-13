@@ -10,7 +10,7 @@ keywords = ["qrcode", "micro-qr", "rmqr", "png", "svg"]
 categories = ["encoding", "multimedia::images"]
 description = "Generates ISO/IEC 18004 QR Code and Micro QR Code symbols and ISO/IEC 23941 rMQR symbols in pure Rust, then renders them as grayscale, PNG and SVG images."
 license = "MIT"
-include = ["src/**/*", "!src/**/*_tests.rs", "Cargo.toml", "README.md", "LICENSE"]
+include = ["/src/**/*", "!/src/**/*_tests.rs", "/Cargo.toml", "/README.md", "/LICENSE"]
 
 [dependencies]
 atomic-write-file = { version = "0.3", optional = true }
