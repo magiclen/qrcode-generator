@@ -218,7 +218,8 @@ fn kanji_mode_round_trips() {
 #[cfg(feature = "kanji")]
 #[test]
 fn mixed_utf8_and_kanji_text_round_trips() {
-    let text = "😀日本語のテスト ﾃｽﾄ ¥100";
+    // rxing reads the JIS8 byte 5C as a backslash, so the optimizer tests check the yen sign instead.
+    let text = "😀日本語のテスト ﾃｽﾄ 100円";
     let symbol = Encoder::new(ErrorCorrection::Medium).encode_text(text).unwrap();
     let (image, size) = render_square(&symbol, 8);
 

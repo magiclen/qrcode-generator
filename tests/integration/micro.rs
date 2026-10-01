@@ -145,23 +145,33 @@ fn kanji_mode_round_trips() {
     assert_eq!(text, decode_square(image, size));
 
     let encoder = Encoder::new(ErrorCorrection::Low).version(Version::M3);
-    let symbol = encoder.encode_text("－").unwrap();
-    let (image, size) = render_square(&symbol, 10);
-    assert_eq!("－", decode_square(image, size));
-    assert!(matches!(
-        encoder.encode_text("−"),
-        Err(EncodeError::TextNotRepresentable {
-            byte_offset: 0,
-            ..
-        })
-    ));
-    assert!(matches!(
-        Segment::kanji("−"),
-        Err(EncodeError::InvalidData {
-            byte_offset: 0,
-            ..
-        })
-    ));
+
+    // Disputed JIS X 0208 positions and characters outside Table 6 have no unambiguous Micro QR representation.
+    for text in ["−", "－", "\u{85}"] {
+        assert!(
+            matches!(
+                encoder.encode_text(text),
+                Err(EncodeError::TextNotRepresentable {
+                    byte_offset: 0,
+                    ..
+                })
+            ),
+            "{text:?}"
+        );
+    }
+
+    for text in ["−", "－"] {
+        assert!(
+            matches!(
+                Segment::kanji(text),
+                Err(EncodeError::InvalidData {
+                    byte_offset: 0,
+                    ..
+                })
+            ),
+            "{text:?}"
+        );
+    }
 }
 
 // Owned and borrowed inputs produce identical symbols, confirming the generic argument bounds.

@@ -4,7 +4,8 @@ use alloc::{vec, vec::Vec};
 use super::kanji_encoding;
 use super::{
     MicroErrorCorrection, MicroMask, MicroVersion, Mode, Segment, Symbol, SymbolVersion,
-    alphanumeric_value, bch_remainder, bits::BitBuffer, mode_rank, reed_solomon,
+    alphanumeric_value, bch_remainder, bits::BitBuffer, is_latin1_character, mode_rank,
+    reed_solomon,
 };
 use crate::EncodeError;
 
@@ -136,7 +137,7 @@ impl<'a> Text<'a> {
                 MicroVersion::M2 => {
                     character.is_ascii() && alphanumeric_value(character as u8).is_some()
                 },
-                MicroVersion::M3 | MicroVersion::M4 => u32::from(character) <= 0xFF || is_kanji,
+                MicroVersion::M3 | MicroVersion::M4 => is_latin1_character(character) || is_kanji,
             };
 
             if !representable {
@@ -246,9 +247,7 @@ pub(crate) fn optimize_text(
                         let count = end - start;
                         count / 2 * 11 + count % 2 * 6
                     },
-                    Mode::Byte if slice.chars().all(|character| u32::from(character) <= 0xFF) => {
-                        (end - start) * 8
-                    },
+                    Mode::Byte if slice.chars().all(is_latin1_character) => (end - start) * 8,
                     #[cfg(feature = "kanji")]
                     Mode::Kanji if kanji[end - 1] => (end - start) * 13,
                     _ => break,

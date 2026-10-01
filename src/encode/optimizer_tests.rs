@@ -59,6 +59,11 @@ fn decode_plan(segments: &[Segment], fnc1: bool) -> String {
             Mode::Byte => match interpretation {
                 Interpretation::Default | Interpretation::Latin1 => {
                     for &byte in segment.source_bytes() {
+                        // ISO/IEC 18004 Table 6 leaves 80 to 9F undefined.
+                        assert!(
+                            !(0x80..=0x9F).contains(&byte),
+                            "undefined Table 6 byte {byte:#04X}"
+                        );
                         result.push(char::from(byte));
                     }
                 },
@@ -68,11 +73,7 @@ fn decode_plan(segments: &[Segment], fnc1: bool) -> String {
                 ),
                 #[cfg(feature = "kanji")]
                 Interpretation::ShiftJis => {
-                    let (decoded, _, had_errors) =
-                        encoding_rs::SHIFT_JIS.decode(segment.source_bytes());
-
-                    assert!(!had_errors);
-                    result.push_str(&decoded);
+                    result.push_str(&decode_shift_jis(segment.source_bytes()))
                 },
             },
             Mode::Kanji => {
@@ -84,16 +85,60 @@ fn decode_plan(segments: &[Segment], fnc1: bool) -> String {
                         Interpretation::Default | Interpretation::ShiftJis
                     ));
 
-                    let (decoded, _, had_errors) =
-                        encoding_rs::SHIFT_JIS.decode(segment.source_bytes());
-
-                    assert!(!had_errors);
-                    result.push_str(&decoded);
+                    result.push_str(&decode_shift_jis(segment.source_bytes()));
                 }
                 #[cfg(not(feature = "kanji"))]
                 panic!("Kanji segments need the kanji feature");
             },
         }
+    }
+
+    result
+}
+
+// Reads Shift JIS bytes with the JIS8 single bytes of ISO/IEC 18004 and checks every pair against the agreed JIS X 0208 set.
+#[cfg(feature = "kanji")]
+fn decode_shift_jis(bytes: &[u8]) -> String {
+    let mut result = String::new();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        let length = if matches!(bytes[index], 0x81..=0x9F | 0xE0..=0xFC) { 2 } else { 1 };
+        let chunk = &bytes[index..index + length];
+
+        match *chunk {
+            // WHATWG reads these as backslash and tilde, but JIS8 assigns the yen sign and the overline.
+            [0x5C] => result.push('¥'),
+            [0x7E] => result.push('\u{203E}'),
+            [byte] => {
+                assert!(
+                    matches!(byte, 0x00..=0x7F | 0xA1..=0xDF),
+                    "undefined JIS8 byte {byte:#04X}"
+                );
+                result.push_str(&encoding_rs::SHIFT_JIS.decode_without_bom_handling(chunk).0);
+            },
+            [lead, trail] => {
+                let value = u16::from_be_bytes([lead, trail]);
+
+                assert!(
+                    matches!(value, 0x8140..=0x84BE | 0x889F..=0x9FFC | 0xE040..=0xEAA4)
+                        && !matches!(
+                            value,
+                            0x815C | 0x815F | 0x8160 | 0x8161 | 0x817C | 0x8191 | 0x8192 | 0x81CA
+                        ),
+                    "disputed or non-JIS X 0208 pair {value:#06X}"
+                );
+
+                let (decoded, had_errors) =
+                    encoding_rs::SHIFT_JIS.decode_without_bom_handling(chunk);
+
+                assert!(!had_errors);
+                result.push_str(&decoded);
+            },
+            _ => unreachable!(),
+        }
+
+        index += length;
     }
 
     result
@@ -209,7 +254,7 @@ fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, force_initial_e
                 end = start;
 
                 while end < length
-                    && !tables.wide[end]
+                    && tables.latin1_ok[end]
                     && end - start < max_count(Mode::Byte, profile)
                 {
                     end += 1;
@@ -394,10 +439,10 @@ fn verify_bytes(data: &[u8], profile: Profile, fnc1: bool) {
 
 fn text_alphabet() -> Vec<char> {
     #[allow(unused_mut)]
-    let mut result = vec!['7', 'K', '%', ' ', 'é', '😀', '\\', '\u{1D}'];
+    let mut result = vec!['7', 'K', '%', ' ', 'é', '😀', '\\', '\u{1D}', '\u{85}'];
 
     #[cfg(feature = "kanji")]
-    result.extend(['点', 'ﾃ', '¥', '−', '－']);
+    result.extend(['点', 'ﾃ', '¥', '−', '－', '×']);
 
     result
 }
@@ -439,10 +484,12 @@ fn fnc1_adjacent_separators_and_percents_round_trip() {
     }
 }
 
-// Every character the Shift JIS conversion accepts must decode back to itself.
+// Every character the Shift JIS conversion accepts must decode back to itself under the JIS8 and JIS X 0208 rules.
 #[cfg(feature = "kanji")]
 #[test]
 fn shift_jis_encoding_round_trips_every_accepted_character() {
+    let mut counts = [0usize; 3];
+
     for value in 0..=u32::from(char::MAX) {
         let Some(character) = char::from_u32(value) else {
             continue;
@@ -451,20 +498,29 @@ fn shift_jis_encoding_round_trips_every_accepted_character() {
             continue;
         };
 
-        let (decoded, _, had_errors) = encoding_rs::SHIFT_JIS.decode(&bytes[..length]);
         let mut buffer = [0; 4];
         let expected: &str = character.encode_utf8(&mut buffer);
 
-        assert!(!had_errors, "{character:?} decodes with errors");
-        assert_eq!(expected, decoded.as_ref(), "{character:?} does not round-trip");
+        assert_eq!(
+            expected,
+            decode_shift_jis(&bytes[..length]),
+            "{character:?} does not round-trip"
+        );
+
+        counts[if length == 2 { 2 } else { usize::from(!character.is_ascii()) }] += 1;
     }
+
+    // ASCII without backslash and tilde, the yen sign, the overline and 63 half-width katakana, then the agreed JIS X 0208 pairs.
+    assert_eq!([126, 65, 6871], counts);
 }
 
+// Disputed JIS X 0208 positions and characters outside Table 6 fall back to other interpretations and keep their meaning.
 #[cfg(feature = "kanji")]
 #[test]
-fn minus_sign_keeps_its_character_across_eci_transitions() {
+fn disputed_and_undefined_characters_keep_their_meaning() {
     for profile in profiles() {
-        for text in ["−", "－", "日本語−日本語", "ﾃｽﾄ−ﾃｽﾄ"] {
+        for text in ["−", "－", "～", "①", "髙", "\u{85}", "日本語−日本語", "ﾃｽﾄ－ﾃｽﾄ", "ﾃｽﾄ¥‾ﾃｽﾄ"]
+        {
             verify_text(text, profile, false, false);
         }
     }

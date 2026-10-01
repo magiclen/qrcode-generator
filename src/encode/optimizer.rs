@@ -2,7 +2,7 @@ use alloc::{collections::VecDeque, vec, vec::Vec};
 
 #[cfg(feature = "qr")]
 use super::QrVersion;
-use super::{EciAssignment, Mode, Segment, alphanumeric_value, mode_rank};
+use super::{EciAssignment, Mode, Segment, alphanumeric_value, is_latin1_character, mode_rank};
 use crate::EncodeError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,7 +138,8 @@ fn push_entry(queue: &mut VecDeque<QueueEntry>, entry: QueueEntry) {
 // Per-character tables shared by the dynamic program and the reconstruction.
 struct TextTables {
     offsets:      Vec<usize>,
-    wide:         Vec<bool>,
+    // Whether a character has a Table 6 byte for the default and ECI 000003 interpretations.
+    latin1_ok:    Vec<bool>,
     digit:        Vec<bool>,
     alnum_ok:     Vec<bool>,
     // Prefix sums of encoded alphanumeric characters; FNC1 doubles a literal percent.
@@ -159,7 +160,7 @@ impl TextTables {
         offsets.push(text.len());
 
         let length = offsets.len() - 1;
-        let mut wide = Vec::with_capacity(length);
+        let mut latin1_ok = Vec::with_capacity(length);
         let mut digit = Vec::with_capacity(length);
         let mut alnum_ok = Vec::with_capacity(length);
         let mut alnum_prefix = Vec::with_capacity(length + 1);
@@ -175,7 +176,7 @@ impl TextTables {
         sjis_prefix.push(0);
 
         for character in text.chars() {
-            wide.push(u32::from(character) > 0xFF);
+            latin1_ok.push(is_latin1_character(character));
             digit.push(character.is_ascii_digit());
 
             let byte = character as u32;
@@ -213,7 +214,7 @@ impl TextTables {
 
         Self {
             offsets,
-            wide,
+            latin1_ok,
             digit,
             alnum_ok,
             alnum_prefix,
@@ -231,23 +232,13 @@ impl TextTables {
 #[cfg(feature = "kanji")]
 fn sjis_classification(character: char) -> (bool, Option<usize>) {
     match character {
-        // The ASCII arm below would report one byte, but JIS X 0201 readers decode 5C and 7E as yen and overline.
+        // JIS8 reads 5C and 7E as the yen sign and the overline.
         '\\' | '~' => (false, None),
         _ if character.is_ascii() => (false, Some(1)),
-        '\u{FF61}'..='\u{FF9F}' => (false, Some(1)),
-        _ => {
-            let Some((encoded, length)) = super::shift_jis_encoding(character) else {
-                return (false, None);
-            };
-
-            // Kanji mode covers exactly the two-byte values inside the two compactable Shift JIS ranges.
-            let kanji = length == 2
-                && matches!(
-                    u16::from_be_bytes([encoded[0], encoded[1]]),
-                    0x8140..=0x9FFC | 0xE040..=0xEBBF
-                );
-
-            (kanji, Some(length))
+        // Every accepted two-byte value lies inside the Kanji mode ranges.
+        _ => match super::shift_jis_encoding(character) {
+            Some((_, length)) => (length == 2, Some(length)),
+            None => (false, None),
         },
     }
 }
@@ -534,7 +525,7 @@ pub(crate) fn text(
 
             // A start only enters a queue when its mode can extend through the character here.
             // A byte segment kept in the default interpretation can only continue a default prefix.
-            if !tables.wide[position] {
+            if tables.latin1_ok[position] {
                 if state == Interpretation::Default {
                     push_entry(&mut byte_queues[Interpretation::Default.index()], QueueEntry {
                         cost: bits - 8 * position as isize,
@@ -668,7 +659,7 @@ pub(crate) fn text(
             }
         }
 
-        if tables.wide[position] {
+        if !tables.latin1_ok[position] {
             byte_queues[Interpretation::Default.index()].clear();
             byte_queues[Interpretation::Latin1.index()].clear();
         }
@@ -746,11 +737,17 @@ pub(crate) fn text(
                 Interpretation::Utf8 => Segment::bytes(slice.as_bytes()),
                 #[cfg(feature = "kanji")]
                 Interpretation::ShiftJis => {
-                    let (encoded, _, had_errors) = encoding_rs::SHIFT_JIS.encode(slice);
+                    // Each character reuses the conversion that admitted it, so the bytes match the planned length.
+                    let mut bytes = Vec::with_capacity(slice.len());
 
-                    debug_assert!(!had_errors);
+                    for character in slice.chars() {
+                        let (encoded, length) = super::shift_jis_encoding(character)
+                            .expect("Shift JIS byte segments hold encodable characters");
 
-                    Segment::bytes(&encoded)
+                        bytes.extend_from_slice(&encoded[..length]);
+                    }
+
+                    Segment::bytes(&bytes)
                 },
             },
             #[cfg(feature = "kanji")]

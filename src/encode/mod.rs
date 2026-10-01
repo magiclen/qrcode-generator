@@ -803,7 +803,9 @@ impl Segment {
     }
 
     #[cfg(feature = "kanji")]
-    /// Creates a Kanji segment from characters in the supported Shift JIS ranges.
+    /// Creates a Kanji segment from JIS X 0208 characters.
+    ///
+    /// The eight JIS X 0208 positions whose Unicode mapping is disputed are rejected, as are characters outside JIS X 0208.
     pub fn kanji(data: impl AsRef<str>) -> Result<Self, EncodeError> {
         let data = data.as_ref();
         let mut bits = BitBuffer::with_capacity(data.chars().count() * 13);
@@ -836,22 +838,44 @@ impl Segment {
     }
 }
 
+// Reports whether a character is in the ISO/IEC 18004 Table 6 byte set, which leaves 80 to 9F undefined.
+#[cfg(any(feature = "qr", feature = "micro-qr", feature = "rmqr"))]
+#[inline]
+pub(crate) const fn is_latin1_character(character: char) -> bool {
+    matches!(character as u32, 0x00..=0x7F | 0xA0..=0xFF)
+}
+
+// Encodes a character as the JIS8 byte or the JIS X 0208 byte pair that ISO/IEC 18004 defines for ECI 000020.
 #[cfg(feature = "kanji")]
 fn shift_jis_encoding(character: char) -> Option<([u8; 2], usize)> {
-    // WHATWG maps these onto bytes that read back as another character, so they cannot round-trip.
-    if matches!(character, '¥' | '\u{203E}' | '\u{2212}') {
-        return None;
-    }
-
     let mut utf8 = [0; 4];
     let text = character.encode_utf8(&mut utf8);
     let (encoded, _, had_errors) = encoding_rs::SHIFT_JIS.encode(text);
 
-    if had_errors || encoded.is_empty() || encoded.len() > 2 {
+    if had_errors {
         return None;
     }
 
-    Some(([encoded[0], encoded.get(1).copied().unwrap_or(0)], encoded.len()))
+    match *encoded {
+        // JIS8 reads 5C and 7E as the yen sign and the overline, so ASCII backslash and tilde have no JIS8 byte.
+        [byte @ (0x5C | 0x7E)] => (!character.is_ascii()).then_some(([byte, 0], 1)),
+        // JIS8 reserves 80, which WHATWG uses for U+0080.
+        [byte @ (0x00..=0x7F | 0xA1..=0xDF)] => Some(([byte, 0], 1)),
+        [lead, trail] if is_unambiguous_jis_x_0208(u16::from_be_bytes([lead, trail])) => {
+            Some(([lead, trail], 2))
+        },
+        _ => None,
+    }
+}
+
+// Reports whether a Shift JIS byte pair is a JIS X 0208 character with one agreed Unicode mapping.
+// NEC row 13 and the IBM extensions are not JIS X 0208 characters, so ISO/IEC 18004 defines no character for them.
+// ISO/IEC 18004 gives no Unicode mapping, and the published JIS and Windows tables disagree on the eight listed pairs.
+#[cfg(feature = "kanji")]
+#[inline]
+const fn is_unambiguous_jis_x_0208(value: u16) -> bool {
+    matches!(value, 0x8140..=0x84BE | 0x889F..=0x9FFC | 0xE040..=0xEAA4)
+        && !matches!(value, 0x815C | 0x815F | 0x8160 | 0x8161 | 0x817C | 0x8191 | 0x8192 | 0x81CA)
 }
 
 #[cfg(feature = "kanji")]
@@ -2377,5 +2401,5 @@ fn text_boundaries(text: &str) -> Vec<usize> {
 #[cfg(feature = "qr")]
 #[inline]
 fn requires_non_default_eci(text: &str) -> bool {
-    text.chars().any(|character| u32::from(character) > 0xFF)
+    text.chars().any(|character| !is_latin1_character(character))
 }
