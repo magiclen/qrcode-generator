@@ -845,6 +845,14 @@ pub(crate) const fn is_latin1_character(character: char) -> bool {
     matches!(character as u32, 0x00..=0x7F | 0xA0..=0xFF)
 }
 
+// Reports whether a character keeps its Table 6 byte in a symbol that uses Kanji mode without any ECI header.
+// ISO/IEC 18004 warns that readers cannot tell such bytes in E0 to EB from Shift JIS lead bytes, and 80 to 9F are already outside Table 6.
+#[cfg(any(feature = "micro-qr", all(feature = "kanji", any(feature = "qr", feature = "rmqr"))))]
+#[inline]
+pub(crate) const fn is_legacy_byte_character(character: char) -> bool {
+    is_latin1_character(character) && !matches!(character as u32, 0xE0..=0xEB)
+}
+
 // Encodes a character as the JIS8 byte or the JIS X 0208 byte pair that ISO/IEC 18004 defines for ECI 000020.
 #[cfg(feature = "kanji")]
 fn shift_jis_encoding(character: char) -> Option<([u8; 2], usize)> {
@@ -1130,7 +1138,7 @@ impl QrEncoder {
 
         ensure_input_length(text.chars().count(), capacity, capacity_bits, 1)?;
 
-        self.encode_optimized_text(text, None, false)
+        self.encode_optimized_text(text, None, optimizer::Start::Free)
     }
 
     /// Encodes a value after converting it to its QR Code text representation.
@@ -1144,6 +1152,8 @@ impl QrEncoder {
     }
 
     /// Encodes explicit segments without changing their boundaries.
+    ///
+    /// The segments are written as given, so keep a Kanji segment after an explicit Shift JIS ECI segment unless the symbol has no ECI segment at all.
     pub fn encode_segments(&self, segments: &[Segment]) -> Result<Symbol, EncodeError> {
         self.encode_segments_with_header(segments, None)
     }
@@ -1193,7 +1203,8 @@ impl QrEncoder {
             ensure_input_length(part.chars().count(), capacity, capacity_bits, 1)?;
         }
 
-        let force_initial_eci = parts.iter().any(|part| requires_non_default_eci(part));
+        let start =
+            structured_append_start(parts.iter().any(|part| requires_non_default_eci(part)));
         let total = parts.len() as u8;
 
         // Each part is optimized once, and both the shared parity and the final symbols reuse the result.
@@ -1201,7 +1212,7 @@ impl QrEncoder {
         let mut parity = 0u8;
 
         for part in parts {
-            let (version, segments) = self.qr_structured_plan(part, force_initial_eci)?;
+            let (version, segments) = self.qr_structured_plan(part, start)?;
 
             // Parity uses the byte representation selected by the optimizer, including Shift JIS or UTF-8 bytes.
             for segment in &segments {
@@ -1238,7 +1249,7 @@ impl QrEncoder {
     fn qr_structured_plan(
         &self,
         text: &str,
-        force_initial_eci: bool,
+        start: optimizer::Start,
     ) -> Result<(QrVersion, Vec<Segment>), EncodeError> {
         if self.versions.start() > self.versions.end() {
             return Err(EncodeError::InvalidVersionRange);
@@ -1250,12 +1261,7 @@ impl QrEncoder {
         };
         let range = self.versions.clone();
         let mut cache = GroupCache::new(|version| {
-            optimizer::text(
-                text,
-                optimizer::Profile::qr(version),
-                self.fnc1.is_some(),
-                force_initial_eci,
-            )
+            optimizer::text(text, optimizer::Profile::qr(version), self.fnc1.is_some(), start)
         });
 
         for value in range.start().0..=range.end().0 {
@@ -1522,7 +1528,7 @@ impl QrEncoder {
         range: RangeInclusive<QrVersion>,
     ) -> Result<Vec<(usize, usize)>, EncodeError> {
         let maximum_version = *range.end();
-        let force_initial_eci = requires_non_default_eci(text);
+        let initial = structured_append_start(requires_non_default_eci(text));
 
         let mut result = Vec::new();
         let mut start = 0;
@@ -1546,11 +1552,7 @@ impl QrEncoder {
             while low <= high {
                 let middle = low + (high - low) / 2;
 
-                if self.text_fits(
-                    &text[offsets[start]..offsets[middle]],
-                    range.clone(),
-                    force_initial_eci,
-                ) {
+                if self.text_fits(&text[offsets[start]..offsets[middle]], range.clone(), initial) {
                     fitting = Some(middle);
                     low = middle + 1;
                 } else {
@@ -1593,17 +1595,13 @@ impl QrEncoder {
         range: RangeInclusive<QrVersion>,
     ) -> Result<Vec<(usize, usize)>, EncodeError> {
         let length = offsets.len() - 1;
-        let force_initial_eci = requires_non_default_eci(text);
+        let initial = structured_append_start(requires_non_default_eci(text));
 
         minimum_area_partition(length, part_count, range, |start, version| {
             let high = length.min(start.saturating_add(self.qr_character_upper_bound(version)));
 
             maximum_fitting_end(high, start, |end| {
-                self.text_fits(
-                    &text[offsets[start]..offsets[end]],
-                    version..=version,
-                    force_initial_eci,
-                )
+                self.text_fits(&text[offsets[start]..offsets[end]], version..=version, initial)
             })
         })
     }
@@ -1620,15 +1618,10 @@ impl QrEncoder {
         &self,
         text: &str,
         range: RangeInclusive<QrVersion>,
-        force_initial_eci: bool,
+        start: optimizer::Start,
     ) -> bool {
         self.qr_range_fits(range, |version| {
-            optimizer::text(
-                text,
-                optimizer::Profile::qr(version),
-                self.fnc1.is_some(),
-                force_initial_eci,
-            )
+            optimizer::text(text, optimizer::Profile::qr(version), self.fnc1.is_some(), start)
         })
     }
 
@@ -1682,17 +1675,12 @@ impl QrEncoder {
         &self,
         text: &str,
         structured_append: Option<StructuredAppendInfo>,
-        force_initial_eci: bool,
+        start: optimizer::Start,
     ) -> Result<Symbol, EncodeError> {
         self.encode_qr_range(
             self.versions.clone(),
             |version| {
-                optimizer::text(
-                    text,
-                    optimizer::Profile::qr(version),
-                    self.fnc1.is_some(),
-                    force_initial_eci,
-                )
+                optimizer::text(text, optimizer::Profile::qr(version), self.fnc1.is_some(), start)
             },
             structured_append,
         )
@@ -1848,7 +1836,7 @@ impl RmqrEncoder {
                 text,
                 optimizer::Profile::rmqr(rmqr::cci(version)),
                 self.fnc1.is_some(),
-                false,
+                optimizer::Start::Free,
             )
         })
     }
@@ -1864,6 +1852,8 @@ impl RmqrEncoder {
     }
 
     /// Encodes explicit segments without changing their boundaries.
+    ///
+    /// The segments are written as given, so keep a Kanji segment after an explicit Shift JIS ECI segment unless the symbol has no ECI segment at all.
     pub fn encode_segments(&self, segments: &[Segment]) -> Result<Symbol, EncodeError> {
         let normalized;
         let segments = if self.fnc1.is_some() {
@@ -2061,6 +2051,8 @@ impl MicroEncoder {
     }
 
     /// Encodes explicit segments without changing their boundaries.
+    ///
+    /// The segments are written as given, so avoid Byte segments holding E0 to EB in a symbol with Kanji segments, because readers could take them for Shift JIS lead bytes.
     pub fn encode_segments(&self, segments: &[Segment]) -> Result<Symbol, EncodeError> {
         self.encode_range(|_| Ok(segments.to_vec()))
     }
@@ -2396,6 +2388,13 @@ fn text_boundaries(text: &str) -> Vec<usize> {
     let mut result: Vec<_> = text.char_indices().map(|(offset, _)| offset).collect();
     result.push(text.len());
     result
+}
+
+// Every part after the first non-Table 6 character must declare its ECI, and Kanji mode needs an explicit Shift JIS ECI in a sequence that may contain ECI headers.
+#[cfg(feature = "qr")]
+#[inline]
+const fn structured_append_start(force_initial_eci: bool) -> optimizer::Start {
+    if force_initial_eci { optimizer::Start::Explicit } else { optimizer::Start::Default }
 }
 
 #[cfg(feature = "qr")]

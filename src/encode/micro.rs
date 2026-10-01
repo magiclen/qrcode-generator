@@ -4,8 +4,8 @@ use alloc::{vec, vec::Vec};
 use super::kanji_encoding;
 use super::{
     MicroErrorCorrection, MicroMask, MicroVersion, Mode, Segment, Symbol, SymbolVersion,
-    alphanumeric_value, bch_remainder, bits::BitBuffer, is_latin1_character, mode_rank,
-    reed_solomon,
+    alphanumeric_value, bch_remainder, bits::BitBuffer, is_latin1_character,
+    is_legacy_byte_character, mode_rank, reed_solomon,
 };
 use crate::EncodeError;
 
@@ -125,19 +125,34 @@ impl<'a> Text<'a> {
         let mut offsets = Vec::with_capacity(text.len().min(capacity) + 1);
         #[cfg(feature = "kanji")]
         let mut kanji = Vec::with_capacity(text.len().min(capacity));
+        // Micro QR Code has no ECI, so a symbol without Kanji mode needs Table 6 bytes and one with Kanji mode also avoids the lead bytes E0 to EB.
+        let mut default_ok = true;
+        #[cfg(feature = "kanji")]
+        let mut legacy_ok = true;
 
         for (offset, character) in text.char_indices() {
             #[cfg(feature = "kanji")]
             let is_kanji = version >= MicroVersion::M3 && kanji_encoding(character).is_some();
-            #[cfg(not(feature = "kanji"))]
-            let is_kanji = false;
 
             let representable = match version {
                 MicroVersion::M1 => character.is_ascii_digit(),
                 MicroVersion::M2 => {
                     character.is_ascii() && alphanumeric_value(character as u8).is_some()
                 },
-                MicroVersion::M3 | MicroVersion::M4 => is_latin1_character(character) || is_kanji,
+                MicroVersion::M3 | MicroVersion::M4 => {
+                    default_ok &= is_latin1_character(character);
+
+                    #[cfg(feature = "kanji")]
+                    {
+                        legacy_ok &= is_kanji || is_legacy_byte_character(character);
+
+                        default_ok || legacy_ok
+                    }
+                    #[cfg(not(feature = "kanji"))]
+                    {
+                        default_ok
+                    }
+                },
             };
 
             if !representable {
@@ -198,6 +213,68 @@ pub(crate) fn optimize_text(
     input: &Text<'_>,
     version: MicroVersion,
 ) -> Result<Vec<Segment>, EncodeError> {
+    let plan = plan_text(input, version, false);
+
+    // Kanji mode is only planned separately, because its symbol must keep every byte clear of the Shift JIS lead bytes.
+    #[cfg(feature = "kanji")]
+    let plan = if version >= MicroVersion::M3 && input.kanji.contains(&true) {
+        match (plan, plan_text(input, version, true)) {
+            (Ok(default), Ok(legacy)) => {
+                Ok(if (legacy.bits, legacy.segments) < (default.bits, default.segments) {
+                    legacy
+                } else {
+                    default
+                })
+            },
+            (Ok(plan), Err(_)) | (Err(_), Ok(plan)) => Ok(plan),
+            (Err(default), Err(legacy)) => Err(default.max(legacy)),
+        }
+    } else {
+        plan
+    };
+
+    let TextPlan {
+        ranges, ..
+    } = plan.map_err(|byte_offset| EncodeError::TextNotRepresentable {
+        byte_offset,
+        family: "Micro QR Code",
+    })?;
+    let text = input.text;
+    let offsets = &input.offsets;
+
+    ranges
+        .into_iter()
+        .map(|(start, end, mode)| {
+            let slice = &text[offsets[start]..offsets[end]];
+            match mode {
+                Mode::Numeric => Segment::numeric(slice),
+                Mode::Alphanumeric => Segment::alphanumeric(slice),
+                Mode::Byte => Ok(Segment::bytes(
+                    slice.chars().map(|character| character as u8).collect::<Vec<_>>(),
+                )),
+                #[cfg(feature = "kanji")]
+                Mode::Kanji => Segment::kanji(slice),
+                #[cfg(not(feature = "kanji"))]
+                Mode::Kanji => unreachable!(),
+                Mode::Eci => unreachable!(),
+            }
+        })
+        .collect()
+}
+
+// The shortest segmentation of a text, as character ranges with their modes.
+struct TextPlan {
+    // Only the Kanji feature compares two plans by these fields.
+    #[cfg_attr(not(feature = "kanji"), allow(dead_code))]
+    bits:     usize,
+    #[cfg_attr(not(feature = "kanji"), allow(dead_code))]
+    segments: usize,
+    ranges:   Vec<(usize, usize, Mode)>,
+}
+
+// Finds the shortest segmentation without Kanji mode, or with Kanji mode when `legacy` is set.
+// The error is the byte offset of the first character the plan cannot reach.
+fn plan_text(input: &Text<'_>, version: MicroVersion, legacy: bool) -> Result<TextPlan, usize> {
     #[derive(Clone, Copy)]
     struct Step {
         bits:     usize,
@@ -247,9 +324,19 @@ pub(crate) fn optimize_text(
                         let count = end - start;
                         count / 2 * 11 + count % 2 * 6
                     },
-                    Mode::Byte if slice.chars().all(is_latin1_character) => (end - start) * 8,
+                    Mode::Byte
+                        if slice.chars().all(|character| {
+                            if legacy {
+                                is_legacy_byte_character(character)
+                            } else {
+                                is_latin1_character(character)
+                            }
+                        }) =>
+                    {
+                        (end - start) * 8
+                    },
                     #[cfg(feature = "kanji")]
-                    Mode::Kanji if kanji[end - 1] => (end - start) * 13,
+                    Mode::Kanji if legacy && kanji[end - 1] => (end - start) * 13,
                     _ => break,
                 };
 
@@ -277,10 +364,7 @@ pub(crate) fn optimize_text(
     }
 
     if let Some(position) = best.iter().position(Option::is_none) {
-        return Err(EncodeError::TextNotRepresentable {
-            byte_offset: offsets[position - 1],
-            family:      "Micro QR Code",
-        });
+        return Err(offsets[position - 1]);
     }
 
     let mut position = length;
@@ -294,24 +378,13 @@ pub(crate) fn optimize_text(
 
     ranges.reverse();
 
-    ranges
-        .into_iter()
-        .map(|(start, end, mode)| {
-            let slice = &text[offsets[start]..offsets[end]];
-            match mode {
-                Mode::Numeric => Segment::numeric(slice),
-                Mode::Alphanumeric => Segment::alphanumeric(slice),
-                Mode::Byte => Ok(Segment::bytes(
-                    slice.chars().map(|character| character as u8).collect::<Vec<_>>(),
-                )),
-                #[cfg(feature = "kanji")]
-                Mode::Kanji => Segment::kanji(slice),
-                #[cfg(not(feature = "kanji"))]
-                Mode::Kanji => unreachable!(),
-                Mode::Eci => unreachable!(),
-            }
-        })
-        .collect()
+    let step = best[length].expect("every text position is reachable");
+
+    Ok(TextPlan {
+        bits: step.bits,
+        segments: step.segments,
+        ranges,
+    })
 }
 
 pub(crate) fn encode(

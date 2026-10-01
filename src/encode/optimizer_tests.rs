@@ -27,6 +27,9 @@ fn plan_bits(profile: Profile, segments: &[Segment]) -> usize {
 fn decode_plan(segments: &[Segment], fnc1: bool) -> String {
     let mut interpretation = Interpretation::Default;
     let mut result = String::new();
+    // Kanji mode without an ECI header only reads as Shift JIS when the whole symbol has no ECI header.
+    let eci_free = segments.iter().all(|segment| segment.mode != Mode::Eci);
+    let legacy = eci_free && segments.iter().any(|segment| segment.mode == Mode::Kanji);
 
     for segment in segments {
         match segment.mode {
@@ -57,16 +60,6 @@ fn decode_plan(segments: &[Segment], fnc1: bool) -> String {
                 }
             },
             Mode::Byte => match interpretation {
-                Interpretation::Default | Interpretation::Latin1 => {
-                    for &byte in segment.source_bytes() {
-                        // ISO/IEC 18004 Table 6 leaves 80 to 9F undefined.
-                        assert!(
-                            !(0x80..=0x9F).contains(&byte),
-                            "undefined Table 6 byte {byte:#04X}"
-                        );
-                        result.push(char::from(byte));
-                    }
-                },
                 Interpretation::Utf8 => result.push_str(
                     core::str::from_utf8(segment.source_bytes())
                         .expect("UTF-8 byte segments hold valid UTF-8"),
@@ -75,15 +68,30 @@ fn decode_plan(segments: &[Segment], fnc1: bool) -> String {
                 Interpretation::ShiftJis => {
                     result.push_str(&decode_shift_jis(segment.source_bytes()))
                 },
+                // The default and Latin-1 interpretations hold one Table 6 byte per character.
+                _ => {
+                    for &byte in segment.source_bytes() {
+                        // Table 6 leaves 80 to 9F undefined, and E0 to EB look like Shift JIS lead bytes next to Kanji mode data.
+                        assert!(
+                            !(0x80..=0x9F).contains(&byte),
+                            "undefined Table 6 byte {byte:#04X}"
+                        );
+                        assert!(
+                            !legacy || !(0xE0..=0xEB).contains(&byte),
+                            "lead byte {byte:#04X} next to Kanji"
+                        );
+                        result.push(char::from(byte));
+                    }
+                },
             },
             Mode::Kanji => {
                 #[cfg(feature = "kanji")]
                 {
-                    // Kanji mode is only legal under the default or Shift JIS interpretation.
-                    assert!(matches!(
-                        interpretation,
-                        Interpretation::Default | Interpretation::ShiftJis
-                    ));
+                    // Kanji mode is only legal in a symbol without ECI headers or under the Shift JIS interpretation.
+                    assert!(
+                        legacy || interpretation == Interpretation::ShiftJis,
+                        "Kanji mode before or under a non Shift JIS ECI"
+                    );
 
                     result.push_str(&decode_shift_jis(segment.source_bytes()));
                 }
@@ -185,20 +193,29 @@ fn decode_alphanumeric(segment: &Segment, fnc1: bool) -> Vec<u8> {
 }
 
 // A direct quadratic reference that explores every legal edge, confirming bit optimality.
-fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, force_initial_eci: bool) -> usize {
+fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, start: Start) -> usize {
     let tables = TextTables::new(text, fnc1);
     let length = tables.offsets.len() - 1;
     let eci_bits = profile.eci_bits();
     let mut best = vec![[INFINITY; Interpretation::COUNT]; length + 1];
 
-    if force_initial_eci {
-        for interpretation in Interpretation::ALL {
-            if interpretation != Interpretation::Default {
-                best[0][interpretation.index()] = eci_bits;
+    match start {
+        Start::Free => {
+            best[0][Interpretation::Default.index()] = 0;
+
+            #[cfg(feature = "kanji")]
+            {
+                best[0][Interpretation::Legacy.index()] = 0;
             }
-        }
-    } else {
-        best[0][Interpretation::Default.index()] = 0;
+        },
+        Start::Default => best[0][Interpretation::Default.index()] = 0,
+        Start::Explicit => {
+            for interpretation in Interpretation::ALL {
+                if interpretation.eci().is_some() {
+                    best[0][interpretation.index()] = eci_bits;
+                }
+            }
+        },
     }
 
     for start in 0..length {
@@ -244,19 +261,16 @@ fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, force_initial_e
             }
 
             {
-                let target = if state == Interpretation::Default {
-                    Interpretation::Default
-                } else {
-                    Interpretation::Latin1
-                };
+                let target = if state.eci().is_none() { state } else { Interpretation::Latin1 };
                 let switch = usize::from(state != target) * eci_bits;
+                #[cfg(feature = "kanji")]
+                let byte_ok = if state.is_legacy() { &tables.legacy_ok } else { &tables.latin1_ok };
+                #[cfg(not(feature = "kanji"))]
+                let byte_ok = &tables.latin1_ok;
 
                 end = start;
 
-                while end < length
-                    && tables.latin1_ok[end]
-                    && end - start < max_count(Mode::Byte, profile)
-                {
+                while end < length && byte_ok[end] && end - start < max_count(Mode::Byte, profile) {
                     end += 1;
 
                     relax(
@@ -264,6 +278,28 @@ fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, force_initial_e
                         base + switch + profile.overhead_bits(Mode::Byte) + (end - start) * 8,
                     );
                 }
+            }
+
+            // A symbol without ECI headers never switches to an explicit interpretation.
+            if state.is_legacy() {
+                #[cfg(feature = "kanji")]
+                {
+                    end = start;
+
+                    while end < length
+                        && tables.kanji_ok[end]
+                        && end - start < max_count(Mode::Kanji, profile)
+                    {
+                        end += 1;
+
+                        relax(
+                            &mut best[end][state.index()],
+                            base + profile.overhead_bits(Mode::Kanji) + (end - start) * 13,
+                        );
+                    }
+                }
+
+                continue;
             }
 
             {
@@ -307,12 +343,7 @@ fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, force_initial_e
                     );
                 }
 
-                let target = if state == Interpretation::Default {
-                    Interpretation::Default
-                } else {
-                    Interpretation::ShiftJis
-                };
-                let switch = usize::from(state != target) * eci_bits;
+                let switch = usize::from(state != Interpretation::ShiftJis) * eci_bits;
 
                 end = start;
 
@@ -323,7 +354,7 @@ fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, force_initial_e
                     end += 1;
 
                     relax(
-                        &mut best[end][target.index()],
+                        &mut best[end][Interpretation::ShiftJis.index()],
                         base + switch + profile.overhead_bits(Mode::Kanji) + (end - start) * 13,
                     );
                 }
@@ -334,18 +365,18 @@ fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, force_initial_e
     best[length].iter().copied().min().expect("at least one state exists")
 }
 
-fn verify_text(text: &str, profile: Profile, fnc1: bool, force_initial_eci: bool) {
-    let plan = super::text(text, profile, fnc1, force_initial_eci).expect("text always has a plan");
-    let expected = reference_text_bits(text, profile, fnc1, force_initial_eci);
+fn verify_text(text: &str, profile: Profile, fnc1: bool, start: Start) {
+    let plan = super::text(text, profile, fnc1, start).expect("text always has a plan");
+    let expected = reference_text_bits(text, profile, fnc1, start);
 
     assert_eq!(
         expected,
         plan_bits(profile, &plan),
-        "bits differ for {text:?} fnc1={fnc1} force={force_initial_eci}"
+        "bits differ for {text:?} fnc1={fnc1} start={start:?}"
     );
     assert_eq!(text, decode_plan(&plan, fnc1), "readback differs for {text:?}");
 
-    if force_initial_eci {
+    if start == Start::Explicit {
         assert!(matches!(plan.first(), Some(segment) if segment.mode == Mode::Eci));
     }
 }
@@ -478,7 +509,7 @@ fn fnc1_adjacent_separators_and_percents_round_trip() {
 
     for profile in profiles {
         for text in ["ABC\u{1D}%DEF", "A\u{1D}\u{1D}B", "%\u{1D}", "%%"] {
-            verify_text(text, profile, true, false);
+            verify_text(text, profile, true, Start::Free);
             verify_bytes(text.as_bytes(), profile, true);
         }
     }
@@ -521,7 +552,7 @@ fn disputed_and_undefined_characters_keep_their_meaning() {
     for profile in profiles() {
         for text in ["−", "－", "～", "①", "髙", "\u{85}", "日本語−日本語", "ﾃｽﾄ－ﾃｽﾄ", "ﾃｽﾄ¥‾ﾃｽﾄ"]
         {
-            verify_text(text, profile, false, false);
+            verify_text(text, profile, false, Start::Free);
         }
     }
 }
@@ -554,8 +585,8 @@ fn text_plans_are_bit_optimal_for_all_short_inputs() {
     for input in &inputs {
         for &profile in &profiles {
             for fnc1 in [false, true] {
-                for force_initial_eci in [false, true] {
-                    verify_text(input, profile, fnc1, force_initial_eci);
+                for start in [Start::Free, Start::Default, Start::Explicit] {
+                    verify_text(input, profile, fnc1, start);
                 }
             }
         }
@@ -578,7 +609,9 @@ fn text_plans_are_bit_optimal_for_random_inputs() {
             input.push(alphabet[(state >> 33) as usize % alphabet.len()]);
         }
 
-        verify_text(&input, profiles()[0], round % 2 == 0, round % 4 >= 2);
+        let start = [Start::Free, Start::Default, Start::Explicit][round / 2 % 3];
+
+        verify_text(&input, profiles()[0], round % 2 == 0, start);
     }
 }
 
@@ -587,7 +620,7 @@ fn text_plans_are_bit_optimal_for_random_inputs() {
 fn text_plans_split_segments_at_character_count_limits() {
     let input = "9".repeat(1100);
 
-    verify_text(&input, profiles()[0], false, false);
+    verify_text(&input, profiles()[0], false, Start::Free);
 }
 
 // Every short byte input over a charset covering all modes is bit-optimal.

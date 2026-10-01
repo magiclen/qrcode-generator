@@ -221,6 +221,26 @@ fn mixed_utf8_and_kanji_text_round_trips() {
     assert_eq!(text, decode_rmqr_pure(image, width, height, "mixed UTF-8 and Kanji").getText());
 }
 
+// Kanji text before a character that needs another ECI declares Shift JIS first, because data before the first ECI reads as ISO-8859-1.
+#[cfg(feature = "kanji")]
+#[test]
+fn kanji_before_another_eci_declares_shift_jis() {
+    let text = "日本語😀";
+    let encoder = Encoder::new(ErrorCorrection::Medium);
+    let symbol = encoder.encode_text(text).unwrap();
+    let segments = [
+        Segment::eci(EciAssignment::SHIFT_JIS),
+        Segment::kanji("日本語").unwrap(),
+        Segment::eci(EciAssignment::UTF_8),
+        Segment::bytes("😀".as_bytes()),
+    ];
+
+    assert_eq!(encoder.encode_segments(&segments).unwrap(), symbol);
+
+    let (image, width, height) = render_rmqr(&symbol, 8);
+    assert_eq!(text, decode_rmqr_pure(image, width, height, "Kanji before UTF-8").getText());
+}
+
 // Owned and borrowed inputs produce identical symbols, confirming the generic argument bounds.
 #[test]
 fn public_inputs_accept_owned_and_borrowed_forms_without_changing_symbols() {

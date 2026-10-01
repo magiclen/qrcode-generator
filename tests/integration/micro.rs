@@ -160,6 +160,15 @@ fn kanji_mode_round_trips() {
         );
     }
 
+    // A symbol using Kanji mode has no ECI, so its bytes must not look like Shift JIS lead bytes.
+    assert!(matches!(
+        encoder.encode_text("点é"),
+        Err(EncodeError::TextNotRepresentable {
+            byte_offset: 3,
+            ..
+        })
+    ));
+
     for text in ["−", "－"] {
         assert!(
             matches!(

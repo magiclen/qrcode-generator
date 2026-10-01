@@ -252,7 +252,7 @@ let symbol = Encoder::new(ErrorCorrection::Low)
 
 Version M1 supports only the `DetectionOnly` error correction level, which detects errors without correcting them; M2 and M3 add Low and Medium, and M4 also offers Quartile.
 
-Micro QR Code does not support ECI, FNC1 or Structured Append. Its text API accepts ISO-8859-1 except the C1 control characters and, with the `kanji` feature, eligible Shift JIS Kanji characters.
+Micro QR Code does not support ECI, FNC1 or Structured Append. Its text API accepts ISO-8859-1 except the C1 control characters and, with the `kanji` feature, eligible Shift JIS Kanji characters. Because Micro QR Code has no ECI, a symbol that uses Kanji mode cannot also hold the bytes E0 to EB (à to ë).
 
 ## Rectangular Micro QR Code
 
@@ -337,7 +337,7 @@ With `encode_structured_append_segments`, each part must include its own ECI hea
 
 ## Kanji
 
-The optional `kanji` feature adds full Shift JIS support to automatic text segmentation and exposes `Segment::kanji`. Eligible characters use the compact 13-bit Kanji mode, and other Shift JIS text such as half-width katakana can be stored as Shift JIS bytes behind an ECI 000020 header. Following the strict ECI rules of ISO/IEC 18004, Kanji mode is only used while the default interpretation or an explicit Shift JIS ECI is in force, so inputs mixing UTF-8 and Kanji data stay readable for strict ECI decoders. The feature is off by default for the widest scanner compatibility.
+The optional `kanji` feature adds full Shift JIS support to automatic text segmentation and exposes `Segment::kanji`. Eligible characters use the compact 13-bit Kanji mode, and other Shift JIS text such as half-width katakana can be stored as Shift JIS bytes behind an ECI 000020 header. ISO/IEC 18004 reads data before the first ECI header with the default ISO-8859-1 interpretation, so Kanji mode without an ECI header is only used in a symbol that has no ECI header at all, and that symbol keeps its bytes clear of E0 to EB, which readers could take for Shift JIS lead bytes. Any other symbol declares an explicit Shift JIS ECI before its Kanji data. The feature is off by default for the widest scanner compatibility.
 
 Text must keep its original characters after decoding, so Shift JIS follows the character sets that ISO/IEC 18004 names for ECI 000020: JIS X 0208 for two-byte characters and JIS8 for single bytes, where byte 5C is the yen sign and byte 7E is the overline. ISO/IEC 18004 defines no Unicode mapping, and published mappings disagree on eight JIS X 0208 positions. For example, 0x817C reads as U+2212 (minus sign) in JIS-based tables and as U+FF0D (fullwidth hyphen-minus) in Windows-based tables, so neither character uses it. Characters outside JIS X 0208, such as the NEC and IBM extensions ① and 髙, are not used either. QR Code and rMQR store these characters as UTF-8, while Micro QR Code and `Segment::kanji` reject them.
 

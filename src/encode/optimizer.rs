@@ -2,6 +2,8 @@ use alloc::{collections::VecDeque, vec, vec::Vec};
 
 #[cfg(feature = "qr")]
 use super::QrVersion;
+#[cfg(feature = "kanji")]
+use super::is_legacy_byte_character;
 use super::{EciAssignment, Mode, Segment, alphanumeric_value, is_latin1_character, mode_rank};
 use crate::EncodeError;
 
@@ -58,22 +60,30 @@ impl Profile {
 }
 
 // The character interpretation in force, following the strict ECI semantics of ISO/IEC 18004.
-// `Default` means no ECI header has been emitted yet, so byte data reads as ISO-8859-1 and Kanji mode reads as Shift JIS.
+// `Default` means no ECI header has been emitted yet, so byte data reads as ISO-8859-1; it can switch to an explicit ECI later, so it never uses Kanji mode.
+// `Legacy` means the whole symbol carries no ECI header, so Kanji mode reads as Shift JIS and bytes avoid the Shift JIS lead bytes E0 to EB.
 // The other states are entered by emitting the matching character set ECI header.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Interpretation {
-    Default  = 0,
-    Latin1   = 1,
-    Utf8     = 2,
+    Default,
     #[cfg(feature = "kanji")]
-    ShiftJis = 3,
+    Legacy,
+    Latin1,
+    Utf8,
+    #[cfg(feature = "kanji")]
+    ShiftJis,
 }
 
 impl Interpretation {
     #[cfg(feature = "kanji")]
-    const ALL: [Self; 4] = [Self::Default, Self::Latin1, Self::Utf8, Self::ShiftJis];
+    const ALL: [Self; 5] = [Self::Default, Self::Legacy, Self::Latin1, Self::Utf8, Self::ShiftJis];
     #[cfg(not(feature = "kanji"))]
     const ALL: [Self; 3] = [Self::Default, Self::Latin1, Self::Utf8];
+    // Interpretations whose byte segments hold one Table 6 byte per character.
+    #[cfg(feature = "kanji")]
+    const CHARACTER_BYTES: [Self; 3] = [Self::Default, Self::Legacy, Self::Latin1];
+    #[cfg(not(feature = "kanji"))]
+    const CHARACTER_BYTES: [Self; 2] = [Self::Default, Self::Latin1];
     const COUNT: usize = Self::ALL.len();
 
     #[inline]
@@ -81,17 +91,45 @@ impl Interpretation {
         self as usize
     }
 
-    // Returns the ECI assignment that this interpretation declares, or `None` for the default one.
+    // Reports whether this is the interpretation of a symbol that never declares an ECI.
+    #[inline]
+    const fn is_legacy(self) -> bool {
+        #[cfg(feature = "kanji")]
+        {
+            matches!(self, Self::Legacy)
+        }
+        #[cfg(not(feature = "kanji"))]
+        {
+            false
+        }
+    }
+
+    // Returns the ECI assignment that this interpretation declares, or `None` for the default ones.
     #[inline]
     const fn eci(self) -> Option<EciAssignment> {
         match self {
             Self::Default => None,
+            #[cfg(feature = "kanji")]
+            Self::Legacy => None,
             Self::Latin1 => Some(EciAssignment::ISO_8859_1),
             Self::Utf8 => Some(EciAssignment::UTF_8),
             #[cfg(feature = "kanji")]
             Self::ShiftJis => Some(EciAssignment::SHIFT_JIS),
         }
     }
+}
+
+// Selects the interpretations a text plan may start in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Start {
+    // A standalone symbol, which may stay free of ECI headers to use Kanji mode, or start in the default interpretation.
+    Free,
+    // The default interpretation without Kanji mode, which may switch to explicit ECIs later.
+    #[cfg_attr(not(feature = "qr"), allow(dead_code))]
+    Default,
+    // An explicit ECI header must start the data, as in a Structured Append part after an earlier ECI.
+    #[cfg_attr(not(feature = "qr"), allow(dead_code))]
+    Explicit,
 }
 
 #[derive(Clone, Copy)]
@@ -140,6 +178,9 @@ struct TextTables {
     offsets:      Vec<usize>,
     // Whether a character has a Table 6 byte for the default and ECI 000003 interpretations.
     latin1_ok:    Vec<bool>,
+    // Whether a character has a byte that cannot be read as a Shift JIS lead byte next to Kanji mode data.
+    #[cfg(feature = "kanji")]
+    legacy_ok:    Vec<bool>,
     digit:        Vec<bool>,
     alnum_ok:     Vec<bool>,
     // Prefix sums of encoded alphanumeric characters; FNC1 doubles a literal percent.
@@ -161,6 +202,8 @@ impl TextTables {
 
         let length = offsets.len() - 1;
         let mut latin1_ok = Vec::with_capacity(length);
+        #[cfg(feature = "kanji")]
+        let mut legacy_ok = Vec::with_capacity(length);
         let mut digit = Vec::with_capacity(length);
         let mut alnum_ok = Vec::with_capacity(length);
         let mut alnum_prefix = Vec::with_capacity(length + 1);
@@ -177,6 +220,8 @@ impl TextTables {
 
         for character in text.chars() {
             latin1_ok.push(is_latin1_character(character));
+            #[cfg(feature = "kanji")]
+            legacy_ok.push(is_legacy_byte_character(character));
             digit.push(character.is_ascii_digit());
 
             let byte = character as u32;
@@ -215,6 +260,8 @@ impl TextTables {
         Self {
             offsets,
             latin1_ok,
+            #[cfg(feature = "kanji")]
+            legacy_ok,
             digit,
             alnum_ok,
             alnum_prefix,
@@ -247,7 +294,7 @@ pub(crate) fn text(
     text: &str,
     profile: Profile,
     fnc1: bool,
-    force_initial_eci: bool,
+    start: Start,
 ) -> Result<Vec<Segment>, EncodeError> {
     let tables = TextTables::new(text, fnc1);
     let length = tables.offsets.len() - 1;
@@ -255,35 +302,42 @@ pub(crate) fn text(
     // Each position keeps the shortest path for every interpretation that can be in force there.
     let mut best = vec![[None; Interpretation::COUNT]; length + 1];
 
-    // A following Structured Append symbol must declare the interpretation that starts its data.
-    if force_initial_eci {
-        for interpretation in Interpretation::ALL {
-            if interpretation == Interpretation::Default {
-                continue;
-            }
+    let initial = |interpretation| TextStep {
+        bits: 0,
+        switches: 0,
+        segments: 0,
+        previous_position: 0,
+        previous_interpretation: interpretation,
+        mode: Mode::Byte,
+        interpretation,
+        switched: false,
+    };
 
-            best[0][interpretation.index()] = Some(TextStep {
-                bits: profile.eci_bits(),
-                switches: 1,
-                segments: 1,
-                previous_position: 0,
-                previous_interpretation: interpretation,
-                mode: Mode::Byte,
-                interpretation,
-                switched: false,
-            });
-        }
-    } else {
-        best[0][Interpretation::Default.index()] = Some(TextStep {
-            bits:                    0,
-            switches:                0,
-            segments:                0,
-            previous_position:       0,
-            previous_interpretation: Interpretation::Default,
-            mode:                    Mode::Byte,
-            interpretation:          Interpretation::Default,
-            switched:                false,
-        });
+    match start {
+        Start::Free => {
+            best[0][Interpretation::Default.index()] = Some(initial(Interpretation::Default));
+
+            #[cfg(feature = "kanji")]
+            {
+                best[0][Interpretation::Legacy.index()] = Some(initial(Interpretation::Legacy));
+            }
+        },
+        Start::Default => {
+            best[0][Interpretation::Default.index()] = Some(initial(Interpretation::Default));
+        },
+        // A following Structured Append symbol must declare the interpretation that starts its data.
+        Start::Explicit => {
+            for interpretation in Interpretation::ALL {
+                if interpretation.eci().is_some() {
+                    best[0][interpretation.index()] = Some(TextStep {
+                        bits: profile.eci_bits(),
+                        switches: 1,
+                        segments: 1,
+                        ..initial(interpretation)
+                    });
+                }
+            }
+        },
     }
 
     let eci_bits = profile.eci_bits();
@@ -306,14 +360,14 @@ pub(crate) fn text(
         core::array::from_fn(|_| core::array::from_fn(|_| VecDeque::new()));
     let mut alnum_queues: [[VecDeque<QueueEntry>; 2]; Interpretation::COUNT] =
         core::array::from_fn(|_| core::array::from_fn(|_| VecDeque::new()));
-    // Kanji mode is only valid under the default interpretation or an explicit Shift JIS ECI.
+    // Kanji mode is only valid in a symbol without ECI headers or under an explicit Shift JIS ECI.
     #[cfg(feature = "kanji")]
     let mut kanji_queues: [VecDeque<QueueEntry>; 2] = [VecDeque::new(), VecDeque::new()];
 
     for position in 0..=length {
         if position >= 1 {
-            // Byte edges targeting Default and Latin1 measure the segment in characters.
-            for target in [Interpretation::Default, Interpretation::Latin1] {
+            // Byte edges targeting Default, Legacy and Latin1 measure the segment in characters.
+            for target in Interpretation::CHARACTER_BYTES {
                 let queue = &mut byte_queues[target.index()];
 
                 while queue.front().is_some_and(|entry| entry.coordinate + byte_window < position) {
@@ -444,7 +498,7 @@ pub(crate) fn text(
 
             #[cfg(feature = "kanji")]
             {
-                // Kanji edges targeting the default interpretation need no ECI header.
+                // Kanji edges in a symbol without ECI headers need no ECI header.
                 let queue = &mut kanji_queues[0];
 
                 while queue.front().is_some_and(|entry| entry.start + kanji_window < position) {
@@ -453,12 +507,12 @@ pub(crate) fn text(
 
                 if let Some(entry) = queue.front().copied() {
                     update_text(
-                        &mut best[position][Interpretation::Default.index()],
+                        &mut best[position][Interpretation::Legacy.index()],
                         entry.step,
                         entry.start,
-                        Interpretation::Default,
+                        entry.active,
                         Mode::Kanji,
-                        Interpretation::Default,
+                        Interpretation::Legacy,
                         false,
                         kanji_overhead + (position - entry.start) * 13,
                     );
@@ -515,7 +569,7 @@ pub(crate) fn text(
             };
 
             // A default prefix replays any continuation of this state by paying its ECI header later, so the state is not a useful source.
-            if state != Interpretation::Default
+            if state.eci().is_some()
                 && default_bits.is_some_and(|bits| step.bits >= bits + eci_bits)
             {
                 continue;
@@ -524,10 +578,19 @@ pub(crate) fn text(
             let bits = step.bits as isize;
 
             // A start only enters a queue when its mode can extend through the character here.
-            // A byte segment kept in the default interpretation can only continue a default prefix.
-            if tables.latin1_ok[position] {
-                if state == Interpretation::Default {
-                    push_entry(&mut byte_queues[Interpretation::Default.index()], QueueEntry {
+            // A byte segment kept in an interpretation without an ECI header can only continue a prefix of the same interpretation.
+            if state.eci().is_none() {
+                #[cfg(feature = "kanji")]
+                let byte_ok = if state.is_legacy() {
+                    tables.legacy_ok[position]
+                } else {
+                    tables.latin1_ok[position]
+                };
+                #[cfg(not(feature = "kanji"))]
+                let byte_ok = tables.latin1_ok[position];
+
+                if byte_ok {
+                    push_entry(&mut byte_queues[state.index()], QueueEntry {
                         cost: bits - 8 * position as isize,
                         switches: step.switches,
                         segments: step.segments,
@@ -536,24 +599,25 @@ pub(crate) fn text(
                         step,
                         active: state,
                     });
-                } else {
-                    // Declaring ECI 3 from the default interpretation is never cheaper than staying in it.
-                    let switched = state != Interpretation::Latin1;
-
-                    push_entry(&mut byte_queues[Interpretation::Latin1.index()], QueueEntry {
-                        cost: bits + (usize::from(switched) * eci_bits) as isize
-                            - 8 * position as isize,
-                        switches: step.switches + usize::from(switched),
-                        segments: step.segments + usize::from(switched),
-                        start: position,
-                        coordinate: position,
-                        step,
-                        active: state,
-                    });
                 }
+            } else if tables.latin1_ok[position] {
+                // Declaring ECI 3 from the default interpretation is never cheaper than staying in it.
+                let switched = state != Interpretation::Latin1;
+
+                push_entry(&mut byte_queues[Interpretation::Latin1.index()], QueueEntry {
+                    cost: bits + (usize::from(switched) * eci_bits) as isize
+                        - 8 * position as isize,
+                    switches: step.switches + usize::from(switched),
+                    segments: step.segments + usize::from(switched),
+                    start: position,
+                    coordinate: position,
+                    step,
+                    active: state,
+                });
             }
 
-            {
+            // A symbol that never declares an ECI cannot switch to an explicit interpretation.
+            if !state.is_legacy() {
                 let switched = state != Interpretation::Utf8;
                 let coordinate = tables.offsets[position];
 
@@ -570,7 +634,7 @@ pub(crate) fn text(
             }
 
             #[cfg(feature = "kanji")]
-            if tables.sjis_ok[position] {
+            if !state.is_legacy() && tables.sjis_ok[position] {
                 let switched = state != Interpretation::ShiftJis;
                 let coordinate = tables.sjis_prefix[position];
 
@@ -614,7 +678,7 @@ pub(crate) fn text(
 
             #[cfg(feature = "kanji")]
             if tables.kanji_ok[position] {
-                if state == Interpretation::Default {
+                if state.is_legacy() {
                     push_entry(&mut kanji_queues[0], QueueEntry {
                         cost: bits - 13 * position as isize,
                         switches: step.switches,
@@ -625,7 +689,7 @@ pub(crate) fn text(
                         active: state,
                     });
                 } else {
-                    // Declaring ECI 20 from the default interpretation is never cheaper than staying in it.
+                    // The default interpretation may still meet an ECI later, so its Kanji data declares Shift JIS first.
                     let switched = state != Interpretation::ShiftJis;
 
                     push_entry(&mut kanji_queues[1], QueueEntry {
@@ -669,6 +733,10 @@ pub(crate) fn text(
             if !tables.kanji_ok[position] {
                 kanji_queues[0].clear();
                 kanji_queues[1].clear();
+            }
+
+            if !tables.legacy_ok[position] {
+                byte_queues[Interpretation::Legacy.index()].clear();
             }
 
             if !tables.sjis_ok[position] {
@@ -730,10 +798,6 @@ pub(crate) fn text(
             Mode::Alphanumeric if fnc1 => Segment::fnc1_alphanumeric(slice.as_bytes())?,
             Mode::Alphanumeric => Segment::alphanumeric(slice)?,
             Mode::Byte => match step.interpretation {
-                Interpretation::Default | Interpretation::Latin1 => {
-                    let bytes: Vec<u8> = slice.chars().map(|character| character as u8).collect();
-                    Segment::bytes(&bytes)
-                },
                 Interpretation::Utf8 => Segment::bytes(slice.as_bytes()),
                 #[cfg(feature = "kanji")]
                 Interpretation::ShiftJis => {
@@ -747,6 +811,11 @@ pub(crate) fn text(
                         bytes.extend_from_slice(&encoded[..length]);
                     }
 
+                    Segment::bytes(&bytes)
+                },
+                // The default, Legacy and Latin-1 interpretations hold one Table 6 byte per character.
+                _ => {
+                    let bytes: Vec<u8> = slice.chars().map(|character| character as u8).collect();
                     Segment::bytes(&bytes)
                 },
             },

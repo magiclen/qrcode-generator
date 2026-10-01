@@ -226,6 +226,28 @@ fn mixed_utf8_and_kanji_text_round_trips() {
     assert_eq!(text, decode_square(image, size));
 }
 
+// Kanji text before a character that needs another ECI declares Shift JIS first, because data before the first ECI reads as ISO-8859-1.
+#[cfg(feature = "kanji")]
+#[test]
+fn kanji_before_another_eci_declares_shift_jis() {
+    use qrcode_generator::qr::EciAssignment;
+
+    let text = "日本語😀";
+    let encoder = Encoder::new(ErrorCorrection::Medium);
+    let symbol = encoder.encode_text(text).unwrap();
+    let segments = [
+        Segment::eci(EciAssignment::SHIFT_JIS),
+        Segment::kanji("日本語").unwrap(),
+        Segment::eci(EciAssignment::UTF_8),
+        Segment::bytes("😀".as_bytes()),
+    ];
+
+    assert_eq!(encoder.encode_segments(&segments).unwrap(), symbol);
+
+    let (image, size) = render_square(&symbol, 8);
+    assert_eq!(text, decode_square(image, size));
+}
+
 // A pure Kanji Structured Append sequence keeps Kanji mode and reassembles to the whole message.
 #[cfg(feature = "kanji")]
 #[test]
