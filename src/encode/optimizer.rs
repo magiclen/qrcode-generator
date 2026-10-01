@@ -180,8 +180,10 @@ fn push_entry(queue: &mut VecDeque<QueueEntry>, entry: QueueEntry) {
     queue.push_back(entry);
 }
 
-// Per-character tables shared by the dynamic program and the reconstruction.
-struct TextTables {
+// Per-character tables of one text, shared by the plans for every profile and by their reconstruction.
+pub(crate) struct TextTables<'a> {
+    text:         &'a str,
+    fnc1:         bool,
     offsets:      Vec<usize>,
     // Whether a character has a Table 6 byte for the default and ECI 000003 interpretations.
     latin1_ok:    Vec<bool>,
@@ -201,8 +203,8 @@ struct TextTables {
     sjis_prefix:  Vec<usize>,
 }
 
-impl TextTables {
-    fn new(text: &str, fnc1: bool) -> Self {
+impl<'a> TextTables<'a> {
+    pub(crate) fn new(text: &'a str, fnc1: bool) -> Self {
         let mut offsets: Vec<usize> = text.char_indices().map(|(offset, _)| offset).collect();
 
         offsets.push(text.len());
@@ -265,6 +267,8 @@ impl TextTables {
         }
 
         Self {
+            text,
+            fnc1,
             offsets,
             latin1_ok,
             #[cfg(feature = "kanji")]
@@ -298,12 +302,11 @@ fn sjis_classification(character: char) -> (bool, Option<usize>) {
 }
 
 pub(crate) fn text(
-    text: &str,
+    tables: &TextTables<'_>,
     profile: Profile,
-    fnc1: bool,
     start: Start,
 ) -> Result<Vec<Segment>, EncodeError> {
-    let (tables, best) = text_steps(text, profile, fnc1, start);
+    let best = text_steps(tables, profile, start);
     let length = tables.offsets.len() - 1;
     let mut final_choice: Option<(Interpretation, TextStep)> = None;
 
@@ -351,11 +354,11 @@ pub(crate) fn text(
             ));
         }
 
-        let slice = &text[tables.offsets[start]..tables.offsets[end]];
+        let slice = &tables.text[tables.offsets[start]..tables.offsets[end]];
 
         result.push(match step.mode {
             Mode::Numeric => Segment::numeric(slice)?,
-            Mode::Alphanumeric if fnc1 => Segment::fnc1_alphanumeric(slice.as_bytes())?,
+            Mode::Alphanumeric if tables.fnc1 => Segment::fnc1_alphanumeric(slice.as_bytes())?,
             Mode::Alphanumeric => Segment::alphanumeric(slice)?,
             Mode::Byte => match step.interpretation {
                 Interpretation::Utf8 => Segment::bytes(slice.as_bytes()),
@@ -398,19 +401,17 @@ pub(crate) fn text_costs(
     fnc1: bool,
     start: Start,
 ) -> Vec<Option<usize>> {
-    let (_, best) = text_steps(text, profile, fnc1, start);
+    let best = text_steps(&TextTables::new(text, fnc1), profile, start);
 
     best.iter().map(|steps| steps.iter().flatten().map(|step| step.bits).min()).collect()
 }
 
 // Runs the text dynamic program, keeping the shortest path to every position for every interpretation.
 fn text_steps(
-    text: &str,
+    tables: &TextTables<'_>,
     profile: Profile,
-    fnc1: bool,
     start: Start,
-) -> (TextTables, Vec<[Option<TextStep>; Interpretation::COUNT]>) {
-    let tables = TextTables::new(text, fnc1);
+) -> Vec<[Option<TextStep>; Interpretation::COUNT]> {
     let length = tables.offsets.len() - 1;
 
     // Each position keeps the shortest path for every interpretation that can be in force there.
@@ -682,10 +683,10 @@ fn text_steps(
         }
 
         // A GS must end an alphanumeric percent run, or the reader pairs it with the next percent.
-        if fnc1
+        if tables.fnc1
             && position > 0
-            && text.as_bytes()[tables.offsets[position - 1]] == 0x1D
-            && matches!(text.as_bytes()[tables.offsets[position]], 0x1D | b'%')
+            && tables.text.as_bytes()[tables.offsets[position - 1]] == 0x1D
+            && matches!(tables.text.as_bytes()[tables.offsets[position]], 0x1D | b'%')
         {
             for queues in &mut alnum_queues {
                 for queue in queues {
@@ -888,7 +889,7 @@ fn text_steps(
         }
     }
 
-    (tables, best)
+    best
 }
 
 #[derive(Clone, Copy)]

@@ -399,6 +399,92 @@ fn structured_append_text_auto_split_round_trips() {
     assert_eq!(text, decoded);
 }
 
+// Calls `visit` with every way to split the text into `count` non-empty parts.
+fn for_each_split<'a>(
+    text: &'a str,
+    count: usize,
+    parts: &mut Vec<&'a str>,
+    visit: &mut impl FnMut(&[&'a str]),
+) {
+    if count == 1 {
+        parts.push(text);
+        visit(parts);
+        parts.pop();
+        return;
+    }
+
+    for (offset, _) in text.char_indices().skip(1) {
+        parts.push(&text[..offset]);
+        for_each_split(&text[offset..], count - 1, parts, visit);
+        parts.pop();
+    }
+}
+
+// Returns the symbol count, the largest version and the total area of a sequence.
+fn sequence_cost(symbols: &[qrcode_generator::Symbol]) -> (usize, SymbolVersion, usize) {
+    (
+        symbols.len(),
+        symbols.iter().map(|symbol| symbol.version()).max().unwrap(),
+        symbols.iter().map(|symbol| symbol.width() * symbol.height()).sum(),
+    )
+}
+
+// Checks automatic splitting against every split with the fewest parts, where each caller-selected split already gets its best versions.
+fn assert_auto_split_is_optimal(maximum_version: u8, text: &str) {
+    let encoder = Encoder::new(ErrorCorrection::High)
+        .version_range(Version::new(1).unwrap()..=Version::new(maximum_version).unwrap());
+
+    // A text that fits one symbol is encoded without Structured Append metadata.
+    let mut best = encoder.encode_text(text).ok().map(|symbol| sequence_cost(&[symbol]));
+
+    for count in 2..=16 {
+        if best.is_some() {
+            break;
+        }
+
+        for_each_split(text, count, &mut Vec::new(), &mut |parts| {
+            if let Ok(symbols) = encoder.encode_structured_append_text(parts) {
+                let cost = sequence_cost(&symbols);
+
+                if best.is_none_or(|best| cost < best) {
+                    best = Some(cost);
+                }
+            }
+        });
+    }
+
+    let symbols = encoder.encode_text_with_structured_append(text).unwrap();
+
+    assert_eq!(best.unwrap(), sequence_cost(&symbols), "{maximum_version} {text}");
+}
+
+// Automatic splitting needs the fewest symbols, then the smallest largest version, then the smallest total area.
+#[test]
+fn structured_append_text_auto_split_is_optimal() {
+    for (maximum_version, text) in [
+        (2, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcd"),
+        (3, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcd"),
+        // The parts before the emoji need no ECI header, and every later part repeats it.
+        (2, "ABCDEFGHIJ0123456789☕☕abcd"),
+        (3, "ABCDEFGHIJ0123456789☕☕abcd"),
+    ] {
+        assert_auto_split_is_optimal(maximum_version, text);
+    }
+}
+
+// Kanji text without ECI headers and Kanji text that needs an ECI are both split optimally.
+#[cfg(feature = "kanji")]
+#[test]
+fn structured_append_kanji_auto_split_is_optimal() {
+    for (maximum_version, text) in [
+        (3, "日本語の構造的連接テスト 0123456789"),
+        (3, "漢字漢字ABCDEFGH01234567漢字☕漢字ABCDEFGH"),
+        (4, "漢字漢字ABCDEFGH01234567漢字☕漢字ABCDEFGH"),
+    ] {
+        assert_auto_split_is_optimal(maximum_version, text);
+    }
+}
+
 // A custom ToQRText value is converted exactly once and its shorter spelling is encoded.
 #[test]
 fn qr_text_conversion_is_called_once() {

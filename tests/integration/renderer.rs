@@ -201,6 +201,53 @@ fn png_and_image_buffer_match_requested_dimensions() {
     assert_eq!(png, written);
 }
 
+// A PNG writer returns write errors of the final chunk and of the closing flush instead of losing them.
+#[cfg(feature = "image")]
+#[test]
+fn png_writer_returns_errors_of_the_final_chunk_and_flush() {
+    use std::io::{self, BufWriter, Write};
+
+    // Accepts up to `limit` bytes and fails every later write.
+    struct LimitedWriter {
+        limit: usize,
+    }
+
+    impl Write for LimitedWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if bytes.len() > self.limit {
+                return Err(io::Error::other("the writer is full"));
+            }
+
+            self.limit -= bytes.len();
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let symbol = symbol();
+    let renderer = Renderer::new(&symbol, 256);
+    let length = renderer.to_png_vec().unwrap().len();
+
+    // The final IEND chunk takes the last 12 bytes.
+    assert!(matches!(
+        renderer.write_png(LimitedWriter {
+            limit: length - 12
+        }),
+        Err(qrcode_generator::RenderError::Io(_))
+    ));
+
+    // A buffered writer passed by value only writes its bytes when it is flushed.
+    assert!(matches!(
+        renderer.write_png(BufWriter::new(LimitedWriter {
+            limit: 0
+        })),
+        Err(qrcode_generator::RenderError::Io(_))
+    ));
+}
+
 #[cfg(all(feature = "image", target_pointer_width = "64"))]
 // An output wider than an image dimension is rejected before the pixel buffer is allocated.
 #[test]

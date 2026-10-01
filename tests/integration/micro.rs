@@ -134,6 +134,30 @@ fn near_capacity_payload_round_trips() {
     assert_eq!(text, decode_square(image, size));
 }
 
+// Empty Numeric segments at the start or in the middle do not end the data early.
+#[test]
+fn empty_numeric_segments_keep_later_segments() {
+    let segments = [
+        Segment::numeric("").unwrap(),
+        Segment::numeric("12").unwrap(),
+        Segment::numeric("").unwrap(),
+        Segment::numeric("34").unwrap(),
+    ];
+
+    for (version, error_correction) in [
+        (Version::M1, ErrorCorrection::DetectionOnly),
+        (Version::M2, ErrorCorrection::Low),
+        (Version::M3, ErrorCorrection::Low),
+        (Version::M4, ErrorCorrection::Low),
+    ] {
+        let symbol =
+            Encoder::new(error_correction).version(version).encode_segments(&segments).unwrap();
+        let (image, size) = render_square(&symbol, 10);
+
+        assert_eq!("1234", decode_square(image, size), "{version:?}");
+    }
+}
+
 // Kanji text is stored in Kanji mode and read back unchanged.
 #[cfg(feature = "kanji")]
 #[test]

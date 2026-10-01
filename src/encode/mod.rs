@@ -855,7 +855,6 @@ pub(crate) const fn is_legacy_byte_character(character: char) -> bool {
     is_latin1_character(character) && !matches!(character as u32, 0xE0..=0xEB)
 }
 
-// Encodes a character as the JIS8 byte or the JIS X 0208 byte pair that ISO/IEC 18004 defines for ECI 000020.
 // Rewrites explicit Alphanumeric segments for FNC1, where a literal percent is doubled, and borrows the segments otherwise.
 #[cfg(any(feature = "qr", feature = "rmqr"))]
 fn normalize_fnc1_segments(
@@ -879,6 +878,7 @@ fn normalize_fnc1_segments(
         .map(Cow::Owned)
 }
 
+// Encodes a character as the JIS8 byte or the JIS X 0208 byte pair that ISO/IEC 18004 defines for ECI 000020.
 #[cfg(feature = "kanji")]
 fn shift_jis_encoding(character: char) -> Option<([u8; 2], usize)> {
     let mut utf8 = [0; 4];
@@ -1292,8 +1292,9 @@ impl QrEncoder {
             index: 0, total: 16, parity: 0
         };
         let range = self.versions.clone();
+        let tables = optimizer::TextTables::new(text, self.fnc1.is_some());
         let mut cache = GroupCache::new(|version| {
-            optimizer::text(text, optimizer::Profile::qr(version), self.fnc1.is_some(), start)
+            optimizer::text(&tables, optimizer::Profile::qr(version), start)
         });
 
         for value in range.start().0..=range.end().0 {
@@ -1428,8 +1429,8 @@ impl QrEncoder {
         for (index, part) in parts.iter().enumerate() {
             let start =
                 if index == 0 { optimizer::Start::Default } else { optimizer::Start::Explicit };
-            let Ok(segments) =
-                optimizer::text(part, optimizer::Profile::qr(version), self.fnc1.is_some(), start)
+            let tables = optimizer::TextTables::new(part, self.fnc1.is_some());
+            let Ok(segments) = optimizer::text(&tables, optimizer::Profile::qr(version), start)
             else {
                 continue;
             };
@@ -1889,11 +1890,11 @@ impl QrEncoder {
         structured_append: Option<StructuredAppendInfo>,
         start: optimizer::Start,
     ) -> Result<Symbol, EncodeError> {
+        let tables = optimizer::TextTables::new(text, self.fnc1.is_some());
+
         self.encode_qr_range(
             self.versions.clone(),
-            |version| {
-                optimizer::text(text, optimizer::Profile::qr(version), self.fnc1.is_some(), start)
-            },
+            |version| optimizer::text(&tables, optimizer::Profile::qr(version), start),
             structured_append,
         )
     }
@@ -2027,11 +2028,13 @@ impl RmqrEncoder {
         let (capacity, capacity_bits) = self.input_capacity_upper_bound()?;
 
         ensure_input_length(text.chars().count(), capacity, capacity_bits, 1)?;
+
+        let tables = optimizer::TextTables::new(text, self.fnc1.is_some());
+
         self.encode_optimized(|version| {
             optimizer::text(
-                text,
+                &tables,
                 optimizer::Profile::rmqr(rmqr::cci(version)),
-                self.fnc1.is_some(),
                 optimizer::Start::Free,
             )
         })
@@ -2234,8 +2237,15 @@ impl MicroEncoder {
     /// Encodes explicit segments without changing their boundaries.
     ///
     /// The segments are written as given, so avoid Byte segments holding E0 to EB in a symbol with Kanji segments, because readers could take them for Shift JIS lead bytes.
+    /// An empty Numeric segment is left out, because Micro QR Code writes it with the same bits as the terminator.
     pub fn encode_segments(&self, segments: &[Segment]) -> Result<Symbol, EncodeError> {
-        self.encode_range(|_| Ok(segments.to_vec()))
+        self.encode_range(|_| {
+            Ok(segments
+                .iter()
+                .filter(|segment| segment.mode != Mode::Numeric || segment.character_count > 0)
+                .cloned()
+                .collect())
+        })
     }
 
     // Returns the candidate version holding the most characters, which is also the most permissive one.

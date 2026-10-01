@@ -292,15 +292,25 @@ impl<'a> Renderer<'a> {
     }
 
     #[cfg(feature = "image")]
-    /// Writes a grayscale PNG image to a writer.
+    /// Writes a grayscale PNG image to a writer, then flushes it.
     pub fn write_png<W: IoWrite>(self, writer: W) -> Result<(), RenderError> {
         let width = u32::try_from(self.width).map_err(|_| RenderError::ImageSizeTooLarge)?;
         let height = u32::try_from(self.height).map_err(|_| RenderError::ImageSizeTooLarge)?;
         let image = self.to_luma8()?;
+        let mut writer = ErrorKeepingWriter {
+            inner: writer, error: None
+        };
+        let result =
+            PngEncoder::new_with_quality(&mut writer, CompressionType::Best, FilterType::NoFilter)
+                .write_image(&image, width, height, ColorType::L8.into());
 
-        PngEncoder::new_with_quality(writer, CompressionType::Best, FilterType::NoFilter)
-            .write_image(&image, width, height, ColorType::L8.into())?;
+        // The PNG encoder ignores the write error of its final chunk, so the kept error is checked before its result.
+        if let Some(error) = writer.error.take() {
+            return Err(error.into());
+        }
 
+        result?;
+        writer.inner.flush()?;
         Ok(())
     }
 
@@ -400,14 +410,21 @@ impl<'a> Renderer<'a> {
 /// The alternate form (`{:#}`) inverts dark and light modules for dark terminal backgrounds.
 /// Pixel dimensions are ignored; only the quiet zone setting applies.
 /// Each line ends with a newline.
+/// Panics if the quiet zone makes the drawing wider or taller than `usize::MAX` modules.
 ///
 /// Note: half-block characters have ambiguous East Asian width and may render as two columns in some CJK terminals, causing misalignment.
 impl fmt::Display for Renderer<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let visible_dark = !f.alternate();
         let quiet_zone = self.quiet_zone;
-        let columns = self.symbol.width() + quiet_zone * 2;
-        let rows = self.symbol.height() + quiet_zone * 2;
+        let quiet_zone_modules = quiet_zone.checked_mul(2);
+        let with_quiet_zone = |modules: usize| {
+            quiet_zone_modules
+                .and_then(|margin| modules.checked_add(margin))
+                .expect("the quiet zone is too large")
+        };
+        let columns = with_quiet_zone(self.symbol.width());
+        let rows = with_quiet_zone(self.symbol.height());
 
         for upper in (0..rows).step_by(2) {
             for x in 0..columns {
@@ -453,6 +470,48 @@ impl<W: IoWrite> fmt::Write for IoFmtWriter<W> {
             self.error = Some(error);
             fmt::Error
         })
+    }
+}
+
+// Keeps the first write error, because an encoder may ignore errors that it cannot return.
+#[cfg(feature = "image")]
+struct ErrorKeepingWriter<W> {
+    inner: W,
+    error: Option<io::Error>,
+}
+
+#[cfg(feature = "image")]
+impl<W: IoWrite> ErrorKeepingWriter<W> {
+    fn keep<T>(&mut self, result: io::Result<T>) -> io::Result<T> {
+        result.map_err(|error| {
+            let kind = error.kind();
+
+            self.error.get_or_insert(error);
+            kind.into()
+        })
+    }
+}
+
+#[cfg(feature = "image")]
+impl<W: IoWrite> IoWrite for ErrorKeepingWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        match self.inner.write(bytes) {
+            // An interrupted write is retried by `write_all`, so it is not a failure yet.
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => Err(error),
+            result => self.keep(result),
+        }
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        let result = self.inner.write_all(bytes);
+
+        self.keep(result)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let result = self.inner.flush();
+
+        self.keep(result)
     }
 }
 

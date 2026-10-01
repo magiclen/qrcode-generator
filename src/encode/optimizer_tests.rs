@@ -392,7 +392,7 @@ fn verify_text(text: &str, profile: Profile, fnc1: bool, start: Start) {
     }
 
     // Starts without ECI headers cannot represent every character.
-    let Ok(plan) = super::text(text, profile, fnc1, start) else {
+    let Ok(plan) = super::text(&super::TextTables::new(text, fnc1), profile, start) else {
         assert!(expected >= INFINITY, "no plan for {text:?} fnc1={fnc1} start={start:?}");
         return;
     };
