@@ -3,7 +3,7 @@
 //! Kanji mode packs eligible Shift JIS characters more tightly than byte mode, and is behind the `kanji` feature.
 //!
 //! Run with: `cargo run --example kanji --features kanji`
-//! Or Run with: `cargo run --example kanji`
+//! Or run with: `cargo run --example kanji`
 
 use qrcode_generator::{
     Renderer,

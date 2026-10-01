@@ -1,3 +1,5 @@
+#[cfg(any(feature = "qr", feature = "rmqr"))]
+use alloc::borrow::Cow;
 #[cfg(feature = "qr")]
 use alloc::collections::BTreeMap;
 #[cfg(feature = "qr")]
@@ -854,6 +856,29 @@ pub(crate) const fn is_legacy_byte_character(character: char) -> bool {
 }
 
 // Encodes a character as the JIS8 byte or the JIS X 0208 byte pair that ISO/IEC 18004 defines for ECI 000020.
+// Rewrites explicit Alphanumeric segments for FNC1, where a literal percent is doubled, and borrows the segments otherwise.
+#[cfg(any(feature = "qr", feature = "rmqr"))]
+fn normalize_fnc1_segments(
+    segments: &[Segment],
+    fnc1: bool,
+) -> Result<Cow<'_, [Segment]>, EncodeError> {
+    if !fnc1 {
+        return Ok(Cow::Borrowed(segments));
+    }
+
+    segments
+        .iter()
+        .map(|segment| {
+            if segment.mode == Mode::Alphanumeric {
+                Segment::fnc1_alphanumeric(segment.source_bytes())
+            } else {
+                Ok(segment.clone())
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Cow::Owned)
+}
+
 #[cfg(feature = "kanji")]
 fn shift_jis_encoding(character: char) -> Option<([u8; 2], usize)> {
     let mut utf8 = [0; 4];
@@ -1500,31 +1525,35 @@ impl QrEncoder {
             capacity_bits: model2::data_codewords(*range.end(), self.error_correction) * 8 * 16,
         };
 
+        let reach = self.qr_character_upper_bound(*range.end());
+        let mut costs = PrefixCosts::new(|start: usize, version, ()| {
+            let end = data.len().min(start.saturating_add(reach));
+
+            optimizer::byte_costs(
+                &data[start..end],
+                optimizer::Profile::qr(version),
+                self.fnc1.is_some(),
+            )
+        });
+
         // Greedy maximum-size parts determine the minimum possible symbol count.
-        let minimum_parts =
-            self.partition_bytes(data, range.clone()).map_err(|_| sequence_capacity_error())?.len();
+        let minimum_parts = self
+            .minimum_byte_parts(&mut costs, data.len(), range.clone())
+            .ok_or_else(sequence_capacity_error)?;
 
-        let mut selected = None;
-
-        for value in range.start().value()..=range.end().value() {
-            let candidate = QrVersion(value);
-
-            if let Ok(parts) = self.partition_bytes(data, *range.start()..=candidate)
-                && parts.len() == minimum_parts
-            {
-                selected = Some(
-                    self.minimum_area_byte_partition(
-                        data,
-                        minimum_parts,
-                        *range.start()..=candidate,
-                    )
-                    .map_err(|_| sequence_capacity_error())?,
-                );
-                break;
-            }
-        }
-
-        let parts = selected.ok_or_else(sequence_capacity_error)?;
+        let candidate = smallest_version_cap(&range, |candidate| {
+            self.minimum_byte_parts(&mut costs, data.len(), *range.start()..=candidate)
+                == Some(minimum_parts)
+        })
+        .ok_or_else(sequence_capacity_error)?;
+        let parts = self
+            .minimum_area_byte_partition(
+                &mut costs,
+                data.len(),
+                minimum_parts,
+                *range.start()..=candidate,
+            )
+            .map_err(|_| sequence_capacity_error())?;
 
         let slices: Vec<&[u8]> = parts.into_iter().map(|(start, end)| &data[start..end]).collect();
 
@@ -1554,6 +1583,17 @@ impl QrEncoder {
         ensure_input_length(text.chars().count(), capacity, capacity_bits, 16)?;
 
         let input = SplitText::new(text);
+        let reach = self.qr_character_upper_bound(*range.end());
+        let mut costs = PrefixCosts::new(|start: usize, version, mode| {
+            let end = input.len().min(start.saturating_add(reach));
+
+            optimizer::text_costs(
+                input.slice(start, end),
+                optimizer::Profile::qr(version),
+                self.fnc1.is_some(),
+                mode,
+            )
+        });
 
         // Partitioning failures replace internal placeholder errors with the full sequence capacity.
         let sequence_capacity_error = || EncodeError::DataTooLong {
@@ -1571,7 +1611,9 @@ impl QrEncoder {
             }
 
             // Text partitions use scalar boundaries so no UTF-8 character is split between symbols.
-            let Some(minimum_parts) = self.minimum_text_parts(&input, range.clone(), regime) else {
+            let Some(minimum_parts) =
+                self.minimum_text_parts(&input, &mut costs, range.clone(), regime)
+            else {
                 continue;
             };
 
@@ -1579,35 +1621,32 @@ impl QrEncoder {
                 continue;
             }
 
-            for value in range.start().value()..=range.end().value() {
-                let candidate = QrVersion(value);
-
-                if self.minimum_text_parts(&input, *range.start()..=candidate, regime)
+            let Some(candidate) = smallest_version_cap(&range, |candidate| {
+                self.minimum_text_parts(&input, &mut costs, *range.start()..=candidate, regime)
                     == Some(minimum_parts)
-                {
-                    let (area, parts) = self
-                        .minimum_area_text_partition(
-                            &input,
-                            minimum_parts,
-                            *range.start()..=candidate,
-                            regime,
-                        )
-                        .map_err(|_| sequence_capacity_error())?;
+            }) else {
+                continue;
+            };
 
-                    if selected.as_ref().is_none_or(|selected| {
-                        (minimum_parts, candidate, area)
-                            < (selected.count, selected.version, selected.area)
-                    }) {
-                        selected = Some(SequencePartition {
-                            count: minimum_parts,
-                            version: candidate,
-                            area,
-                            parts,
-                        });
-                    }
+            let (area, parts) = self
+                .minimum_area_text_partition(
+                    &input,
+                    &mut costs,
+                    minimum_parts,
+                    *range.start()..=candidate,
+                    regime,
+                )
+                .map_err(|_| sequence_capacity_error())?;
 
-                    break;
-                }
+            if selected.as_ref().is_none_or(|selected| {
+                (minimum_parts, candidate, area) < (selected.count, selected.version, selected.area)
+            }) {
+                selected = Some(SequencePartition {
+                    count: minimum_parts,
+                    version: candidate,
+                    area,
+                    parts,
+                });
             }
         }
 
@@ -1648,60 +1687,71 @@ impl QrEncoder {
         Ok((numeric_character_capacity(capacity_bits, overhead_bits), capacity_bits))
     }
 
-    fn partition_bytes(
+    // Counts the fewest byte parts by taking the longest part that fits each time.
+    fn minimum_byte_parts<F>(
         &self,
-        data: &[u8],
+        costs: &mut PrefixCosts<(), F>,
+        length: usize,
         range: RangeInclusive<QrVersion>,
-    ) -> Result<Vec<(usize, usize)>, EncodeError> {
-        let maximum_version = *range.end();
-        let mut result = Vec::new();
+    ) -> Option<usize>
+    where
+        F: FnMut(usize, QrVersion, ()) -> Vec<Option<usize>>, {
         let mut start = 0;
+        let mut count = 0;
 
-        while start < data.len() {
-            if result.len() == 16 {
-                return Err(EncodeError::DataTooLong {
-                    required_bits: None, capacity_bits: 0
-                });
+        while start < length {
+            if count == 16 {
+                return None;
             }
 
-            let mut low = start + 1;
-
-            // Numeric mode gives the largest possible character capacity for any input.
-            let mut high = data
-                .len()
-                .min(start.saturating_add(self.qr_character_upper_bound(maximum_version)));
-
-            let mut fitting = None;
-
-            while low <= high {
-                let middle = low + (high - low) / 2;
-
-                if self.bytes_fit(&data[start..middle], range.clone()) {
-                    fitting = Some(middle);
-                    low = middle + 1;
-                } else {
-                    high = middle - 1;
-                }
-            }
-
-            let end = fitting
-                .ok_or(EncodeError::DataTooLong {
-                    required_bits: None, capacity_bits: 0
-                })?;
-
-            result.push((start, end));
-            start = end;
+            start = self.farthest_part_end(costs, start, (), range.clone())?;
+            count += 1;
         }
-        Ok(result)
+
+        Some(count)
+    }
+
+    // Finds the farthest end of a Structured Append part from `start` that fits some version in the range.
+    fn farthest_part_end<K, F>(
+        &self,
+        costs: &mut PrefixCosts<K, F>,
+        start: usize,
+        key: K,
+        range: RangeInclusive<QrVersion>,
+    ) -> Option<usize>
+    where
+        K: Copy + Ord,
+        F: FnMut(usize, QrVersion, K) -> Vec<Option<usize>>, {
+        let header_bits = model2::header_bits(self.fnc1, true);
+        let mut result = None;
+
+        for value in range.start().value()..=range.end().value() {
+            let version = QrVersion(value);
+            let capacity_bits = model2::data_codewords(version, self.error_correction) * 8;
+
+            // Prefix costs never decrease, so the prefixes that fit all come before the ones that do not.
+            let count = costs.get(start, version, key)[1..].partition_point(|cost| {
+                cost.is_some_and(|bits| header_bits + bits <= capacity_bits)
+            });
+
+            if count > 0 {
+                result = result.max(Some(start + count));
+            }
+        }
+
+        result
     }
 
     // Counts the fewest parts of one ECI layout, keeping per layer the farthest end with and without an ECI in force.
-    fn minimum_text_parts(
+    fn minimum_text_parts<F>(
         &self,
         input: &SplitText<'_>,
+        costs: &mut PrefixCosts<optimizer::Start, F>,
         range: RangeInclusive<QrVersion>,
         regime: SequenceRegime,
-    ) -> Option<usize> {
+    ) -> Option<usize>
+    where
+        F: FnMut(usize, QrVersion, optimizer::Start) -> Vec<Option<usize>>, {
         let length = input.len();
         let mut layer = vec![(0, false)];
 
@@ -1710,7 +1760,7 @@ impl QrEncoder {
 
             for &(start, eci_in_force) in &layer {
                 for (end, leaves_eci) in self
-                    .text_part_ends(input, start, eci_in_force, regime, range.clone())
+                    .text_part_ends(input, costs, start, eci_in_force, regime, range.clone())
                     .into_iter()
                     .flatten()
                 {
@@ -1746,14 +1796,17 @@ impl QrEncoder {
 
     // Finds the farthest ends one text part can reach from a start, each with whether it may leave an ECI in force.
     // A start that may leave an ECI in force is only listed when it reaches farther than the starts that cannot.
-    fn text_part_ends(
+    fn text_part_ends<F>(
         &self,
         input: &SplitText<'_>,
+        costs: &mut PrefixCosts<optimizer::Start, F>,
         start: usize,
         eci_in_force: bool,
         regime: SequenceRegime,
         range: RangeInclusive<QrVersion>,
-    ) -> [Option<(usize, bool)>; 2] {
+    ) -> [Option<(usize, bool)>; 2]
+    where
+        F: FnMut(usize, QrVersion, optimizer::Start) -> Vec<Option<usize>>, {
         // Numeric mode gives the largest possible scalar capacity for any text input.
         let high =
             input.len().min(start.saturating_add(self.qr_character_upper_bound(*range.end())));
@@ -1766,9 +1819,7 @@ impl QrEncoder {
                 continue;
             }
 
-            let end = maximum_fitting_end(high, start, |end| {
-                self.text_fits(input.slice(start, end), range.clone(), mode)
-            });
+            let end = self.farthest_part_end(costs, start, mode, range.clone());
 
             if let Some(end) = end
                 && farthest.is_none_or(|farthest| end > farthest)
@@ -1781,85 +1832,38 @@ impl QrEncoder {
         result
     }
 
-    fn minimum_area_byte_partition(
+    fn minimum_area_byte_partition<F>(
         &self,
-        data: &[u8],
+        costs: &mut PrefixCosts<(), F>,
+        length: usize,
         part_count: usize,
         range: RangeInclusive<QrVersion>,
-    ) -> Result<Vec<(usize, usize)>, EncodeError> {
+    ) -> Result<Vec<(usize, usize)>, EncodeError>
+    where
+        F: FnMut(usize, QrVersion, ()) -> Vec<Option<usize>>, {
         // Byte data never declares an ECI, so every part ends without one in force.
-        let (_, parts) =
-            minimum_area_partition(data.len(), part_count, range, |start, _, version| {
-                let high =
-                    data.len().min(start.saturating_add(self.qr_character_upper_bound(version)));
-                let end = maximum_fitting_end(high, start, |end| {
-                    self.bytes_fit(&data[start..end], version..=version)
-                });
+        let (_, parts) = minimum_area_partition(length, part_count, range, |start, _, version| {
+            let end = self.farthest_part_end(costs, start, (), version..=version);
 
-                [end.map(|end| (end, false)), None]
-            })?;
+            [end.map(|end| (end, false)), None]
+        })?;
 
         Ok(parts)
     }
 
-    fn minimum_area_text_partition(
+    fn minimum_area_text_partition<F>(
         &self,
         input: &SplitText<'_>,
+        costs: &mut PrefixCosts<optimizer::Start, F>,
         part_count: usize,
         range: RangeInclusive<QrVersion>,
         regime: SequenceRegime,
-    ) -> Result<(usize, Vec<(usize, usize)>), EncodeError> {
-        minimum_area_partition(input.len(), part_count, range, |start, eci_in_force, version| {
-            self.text_part_ends(input, start, eci_in_force, regime, version..=version)
-        })
-    }
-
-    // Reports whether the bytes fit some version in the range as one Structured Append part.
-    fn bytes_fit(&self, data: &[u8], range: RangeInclusive<QrVersion>) -> bool {
-        self.qr_range_fits(range, |version| {
-            optimizer::bytes(data, optimizer::Profile::qr(version), self.fnc1.is_some())
-        })
-    }
-
-    // Reports whether the text fits some version in the range as one Structured Append part.
-    fn text_fits(
-        &self,
-        text: &str,
-        range: RangeInclusive<QrVersion>,
-        start: optimizer::Start,
-    ) -> bool {
-        self.qr_range_fits(range, |version| {
-            optimizer::text(text, optimizer::Profile::qr(version), self.fnc1.is_some(), start)
-        })
-    }
-
-    // Runs the fit check without drawing a symbol, so probing skips the matrix and mask work.
-    fn qr_range_fits<F>(&self, range: RangeInclusive<QrVersion>, segments: F) -> bool
+    ) -> Result<(usize, Vec<(usize, usize)>), EncodeError>
     where
-        F: FnMut(QrVersion) -> Result<Vec<Segment>, EncodeError>, {
-        if range.start() > range.end() {
-            return false;
-        }
-
-        // Only the presence of the header matters for the fit check, so the values are placeholders.
-        let header = StructuredAppendInfo {
-            index: 0, total: 16, parity: 0
-        };
-        let mut cache = GroupCache::new(segments);
-
-        for value in range.start().0..=range.end().0 {
-            let version = QrVersion(value);
-
-            let Ok(candidate) = cache.get(version) else {
-                return false;
-            };
-
-            if model2::fits(candidate, version, self.error_correction, self.fnc1, Some(header)) {
-                return true;
-            }
-        }
-
-        false
+        F: FnMut(usize, QrVersion, optimizer::Start) -> Vec<Option<usize>>, {
+        minimum_area_partition(input.len(), part_count, range, |start, eci_in_force, version| {
+            self.text_part_ends(input, costs, start, eci_in_force, regime, version..=version)
+        })
     }
 
     #[inline]
@@ -1941,23 +1945,7 @@ impl QrEncoder {
         segments: &[Segment],
         structured_append: Option<StructuredAppendInfo>,
     ) -> Result<Symbol, EncodeError> {
-        let normalized;
-
-        let segments = if self.fnc1.is_some() {
-            normalized = segments
-                .iter()
-                .map(|segment| {
-                    if segment.mode == Mode::Alphanumeric {
-                        Segment::fnc1_alphanumeric(segment.source_bytes())
-                    } else {
-                        Ok(segment.clone())
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            normalized.as_slice()
-        } else {
-            segments
-        };
+        let segments = normalize_fnc1_segments(segments, self.fnc1.is_some())?;
 
         self.encode_qr_range(self.versions.clone(), |_| Ok(segments.to_vec()), structured_append)
     }
@@ -2063,26 +2051,11 @@ impl RmqrEncoder {
     ///
     /// The segments are written as given, so keep a Kanji segment after an explicit Shift JIS ECI segment unless the symbol has no ECI segment at all.
     pub fn encode_segments(&self, segments: &[Segment]) -> Result<Symbol, EncodeError> {
-        let normalized;
-        let segments = if self.fnc1.is_some() {
-            normalized = segments
-                .iter()
-                .map(|segment| {
-                    if segment.mode == Mode::Alphanumeric {
-                        Segment::fnc1_alphanumeric(segment.source_bytes())
-                    } else {
-                        Ok(segment.clone())
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            normalized.as_slice()
-        } else {
-            segments
-        };
+        let segments = normalize_fnc1_segments(segments, self.fnc1.is_some())?;
 
         self.encode_candidates(|version| {
             rmqr::encode(
-                segments,
+                &segments,
                 version,
                 self.error_correction,
                 self.boost_error_correction,
@@ -2505,29 +2478,29 @@ where
     Ok((area, result))
 }
 
+// Finds the smallest largest version that still reaches the wanted symbol count, because raising it never adds symbols.
 #[cfg(feature = "qr")]
-fn maximum_fitting_end<F>(length: usize, start: usize, mut fits: F) -> Option<usize>
+fn smallest_version_cap<F>(
+    range: &RangeInclusive<QrVersion>,
+    mut reaches_count: F,
+) -> Option<QrVersion>
 where
-    F: FnMut(usize) -> bool, {
-    if start == length {
-        return None;
-    }
-
-    let mut low = start + 1;
-    let mut high = length;
+    F: FnMut(QrVersion) -> bool, {
+    let mut low = range.start().value();
+    let mut high = range.end().value();
     let mut result = None;
 
-    // Encoding fit is monotonic as the candidate slice grows from a fixed start.
     while low <= high {
         let middle = low + (high - low) / 2;
 
-        if fits(middle) {
-            result = Some(middle);
-            low = middle + 1;
-        } else {
+        if reaches_count(QrVersion(middle)) {
+            result = Some(QrVersion(middle));
             high = middle - 1;
+        } else {
+            low = middle + 1;
         }
     }
+
     result
 }
 
@@ -2601,6 +2574,33 @@ const fn validate_part_count(count: usize) -> Result<(), EncodeError> {
         Err(EncodeError::InvalidStructuredAppendPartCount {
             count,
         })
+    }
+}
+
+// Caches the fewest bits of every prefix from one start per version group and key, so partition probes share one optimizer run.
+#[cfg(feature = "qr")]
+struct PrefixCosts<K, F> {
+    compute: F,
+    costs:   BTreeMap<(usize, usize, K), Vec<Option<usize>>>,
+}
+
+#[cfg(feature = "qr")]
+impl<K: Copy + Ord, F: FnMut(usize, QrVersion, K) -> Vec<Option<usize>>> PrefixCosts<K, F> {
+    #[inline]
+    fn new(compute: F) -> Self {
+        Self {
+            compute,
+            costs: BTreeMap::new(),
+        }
+    }
+
+    // Returns the prefix costs from `start`, indexed by the prefix length, using the profile of the version group.
+    fn get(&mut self, start: usize, version: QrVersion, key: K) -> &[Option<usize>] {
+        let compute = &mut self.compute;
+
+        self.costs
+            .entry((start, version_group(version), key))
+            .or_insert_with(|| compute(start, version, key))
     }
 }
 

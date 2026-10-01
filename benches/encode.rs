@@ -39,6 +39,14 @@ fn qr_segments(bencher: &mut Bencher) {
     bencher.iter(|| encoder.encode_segments(black_box(&segments)).unwrap());
 }
 
+// Text longer than one version 40 symbol exercises the automatic Structured Append partition search over the full version range.
+fn qr_text_structured_append(bencher: &mut Bencher) {
+    let text = "Structured Append benchmark 0123456789 payload, ".repeat(100);
+    let encoder = qr::Encoder::new(qr::ErrorCorrection::Low);
+
+    bencher.iter(|| encoder.encode_text_with_structured_append(black_box(text.as_str())).unwrap());
+}
+
 // Micro QR selects a small symbol and a mask by score.
 fn micro_text(bencher: &mut Bencher) {
     let encoder = micro::Encoder::new(micro::ErrorCorrection::Low);
@@ -80,6 +88,7 @@ benchmark_group!(
     qr_text_large,
     qr_bytes_large,
     qr_segments,
+    qr_text_structured_append,
     micro_text,
     micro_unicode_rejection,
     auto_unicode_fallback,

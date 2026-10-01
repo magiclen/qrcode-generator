@@ -161,13 +161,7 @@ fn total_bits(
     fnc1: Option<Fnc1>,
     structured_append: Option<StructuredAppendInfo>,
 ) -> Result<usize, EncodeError> {
-    let mut result = usize::from(structured_append.is_some()) * 20;
-
-    result += match fnc1 {
-        Some(Fnc1::Gs1) => 4,
-        Some(Fnc1::Industry(_)) => 12,
-        None => 0,
-    };
+    let mut result = header_bits(fnc1, structured_append.is_some());
 
     for segment in segments {
         let cci = segment.mode.cci_bits(version);
@@ -181,11 +175,25 @@ fn total_bits(
 
         result = result.checked_add(4 + usize::from(cci) + segment.bits.len()).ok_or(
             EncodeError::DataTooLong {
-                required_bits: None, capacity_bits: 0
+                required_bits: None,
+                capacity_bits: data_codewords(version, error_correction) * 8,
             },
         )?;
     }
     Ok(result)
+}
+
+// Returns the bits of the Structured Append and FNC1 headers that precede the segments.
+#[inline]
+pub(crate) const fn header_bits(fnc1: Option<Fnc1>, structured_append: bool) -> usize {
+    let structured_append_bits = if structured_append { 20 } else { 0 };
+
+    structured_append_bits
+        + match fnc1 {
+            Some(Fnc1::Gs1) => 4,
+            Some(Fnc1::Industry(_)) => 12,
+            None => 0,
+        }
 }
 
 fn add_error_correction(

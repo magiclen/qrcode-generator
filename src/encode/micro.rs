@@ -400,7 +400,7 @@ pub(crate) fn encode(
             version:          SymbolVersion::Micro(version),
             error_correction: error_correction.into(),
         })?;
-    let used_bits = total_bits(segments, version)?;
+    let used_bits = total_bits(segments, version, capacity_info.data_bits)?;
 
     if used_bits > capacity_info.data_bits {
         return Err(EncodeError::DataTooLong {
@@ -513,7 +513,11 @@ pub(crate) fn encode(
     })
 }
 
-fn total_bits(segments: &[Segment], version: MicroVersion) -> Result<usize, EncodeError> {
+fn total_bits(
+    segments: &[Segment],
+    version: MicroVersion,
+    capacity_bits: usize,
+) -> Result<usize, EncodeError> {
     let mut result = 0usize;
 
     for segment in segments {
@@ -525,13 +529,15 @@ fn total_bits(segments: &[Segment], version: MicroVersion) -> Result<usize, Enco
 
         if segment.character_count >= 1usize << cci {
             return Err(EncodeError::DataTooLong {
-                required_bits: None, capacity_bits: 0
+                required_bits: None,
+                capacity_bits,
             });
         }
 
         result = result.checked_add(indicator as usize + cci as usize + segment.bits.len()).ok_or(
             EncodeError::DataTooLong {
-                required_bits: None, capacity_bits: 0
+                required_bits: None,
+                capacity_bits,
             },
         )?;
     }

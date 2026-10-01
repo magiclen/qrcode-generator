@@ -120,7 +120,7 @@ impl Interpretation {
 }
 
 // Selects the interpretations a text plan may start in.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum Start {
     // A standalone symbol, which may stay free of ECI headers to use Kanji mode, or start in the default interpretation.
     Free,
@@ -303,6 +303,113 @@ pub(crate) fn text(
     fnc1: bool,
     start: Start,
 ) -> Result<Vec<Segment>, EncodeError> {
+    let (tables, best) = text_steps(text, profile, fnc1, start);
+    let length = tables.offsets.len() - 1;
+    let mut final_choice: Option<(Interpretation, TextStep)> = None;
+
+    // The iteration order makes ties prefer the default interpretation, then the lowest ECI usage.
+    for interpretation in Interpretation::ALL {
+        if let Some(step) = best[length][interpretation.index()]
+            && final_choice.is_none_or(|(_, current)| {
+                (step.bits, step.switches, step.segments)
+                    < (current.bits, current.switches, current.segments)
+            })
+        {
+            final_choice = Some((interpretation, step));
+        }
+    }
+
+    let (final_interpretation, _) = final_choice
+        .ok_or(EncodeError::DataTooLong {
+            required_bits: None, capacity_bits: 0
+        })?;
+
+    // Backtracking also recovers the interpretation selected before the first segment.
+    let mut edges = Vec::new();
+    let mut position = length;
+    let mut interpretation = final_interpretation;
+
+    while position != 0 {
+        let step = best[position][interpretation.index()].expect("the final state is reachable");
+        edges.push((step.previous_position, position, step));
+        position = step.previous_position;
+        interpretation = step.previous_interpretation;
+    }
+
+    edges.reverse();
+
+    let mut result = Vec::new();
+
+    if let Some(assignment) = interpretation.eci() {
+        result.push(Segment::eci(assignment));
+    }
+
+    for (start, end, step) in edges {
+        if step.switched {
+            result.push(Segment::eci(
+                step.interpretation.eci().expect("switched edges declare an explicit ECI"),
+            ));
+        }
+
+        let slice = &text[tables.offsets[start]..tables.offsets[end]];
+
+        result.push(match step.mode {
+            Mode::Numeric => Segment::numeric(slice)?,
+            Mode::Alphanumeric if fnc1 => Segment::fnc1_alphanumeric(slice.as_bytes())?,
+            Mode::Alphanumeric => Segment::alphanumeric(slice)?,
+            Mode::Byte => match step.interpretation {
+                Interpretation::Utf8 => Segment::bytes(slice.as_bytes()),
+                #[cfg(feature = "kanji")]
+                Interpretation::ShiftJis => {
+                    // Each character reuses the conversion that admitted it, so the bytes match the planned length.
+                    let mut bytes = Vec::with_capacity(slice.len());
+
+                    for character in slice.chars() {
+                        let (encoded, length) = super::shift_jis_encoding(character)
+                            .expect("Shift JIS byte segments hold encodable characters");
+
+                        bytes.extend_from_slice(&encoded[..length]);
+                    }
+
+                    Segment::bytes(&bytes)
+                },
+                // The default, Legacy and Latin-1 interpretations hold one Table 6 byte per character.
+                _ => {
+                    let bytes: Vec<u8> = slice.chars().map(|character| character as u8).collect();
+                    Segment::bytes(&bytes)
+                },
+            },
+            #[cfg(feature = "kanji")]
+            Mode::Kanji => Segment::kanji(slice)?,
+            #[cfg(not(feature = "kanji"))]
+            Mode::Kanji => unreachable!(),
+            Mode::Eci => unreachable!(),
+        });
+    }
+    Ok(result)
+}
+
+// Returns the fewest bits of every text prefix, indexed by its character count, or `None` for a prefix without a plan.
+// Dropping the last character of a plan never adds bits, so the costs never decrease along the text.
+#[cfg_attr(not(feature = "qr"), allow(dead_code))]
+pub(crate) fn text_costs(
+    text: &str,
+    profile: Profile,
+    fnc1: bool,
+    start: Start,
+) -> Vec<Option<usize>> {
+    let (_, best) = text_steps(text, profile, fnc1, start);
+
+    best.iter().map(|steps| steps.iter().flatten().map(|step| step.bits).min()).collect()
+}
+
+// Runs the text dynamic program, keeping the shortest path to every position for every interpretation.
+fn text_steps(
+    text: &str,
+    profile: Profile,
+    fnc1: bool,
+    start: Start,
+) -> (TextTables, Vec<[Option<TextStep>; Interpretation::COUNT]>) {
     let tables = TextTables::new(text, fnc1);
     let length = tables.offsets.len() - 1;
 
@@ -781,88 +888,7 @@ pub(crate) fn text(
         }
     }
 
-    let mut final_choice: Option<(Interpretation, TextStep)> = None;
-
-    // The iteration order makes ties prefer the default interpretation, then the lowest ECI usage.
-    for interpretation in Interpretation::ALL {
-        if let Some(step) = best[length][interpretation.index()]
-            && final_choice.is_none_or(|(_, current)| {
-                (step.bits, step.switches, step.segments)
-                    < (current.bits, current.switches, current.segments)
-            })
-        {
-            final_choice = Some((interpretation, step));
-        }
-    }
-
-    let (final_interpretation, _) = final_choice
-        .ok_or(EncodeError::DataTooLong {
-            required_bits: None, capacity_bits: 0
-        })?;
-
-    // Backtracking also recovers the interpretation selected before the first segment.
-    let mut edges = Vec::new();
-    let mut position = length;
-    let mut interpretation = final_interpretation;
-
-    while position != 0 {
-        let step = best[position][interpretation.index()].expect("the final state is reachable");
-        edges.push((step.previous_position, position, step));
-        position = step.previous_position;
-        interpretation = step.previous_interpretation;
-    }
-
-    edges.reverse();
-
-    let mut result = Vec::new();
-
-    if let Some(assignment) = interpretation.eci() {
-        result.push(Segment::eci(assignment));
-    }
-
-    for (start, end, step) in edges {
-        if step.switched {
-            result.push(Segment::eci(
-                step.interpretation.eci().expect("switched edges declare an explicit ECI"),
-            ));
-        }
-
-        let slice = &text[tables.offsets[start]..tables.offsets[end]];
-
-        result.push(match step.mode {
-            Mode::Numeric => Segment::numeric(slice)?,
-            Mode::Alphanumeric if fnc1 => Segment::fnc1_alphanumeric(slice.as_bytes())?,
-            Mode::Alphanumeric => Segment::alphanumeric(slice)?,
-            Mode::Byte => match step.interpretation {
-                Interpretation::Utf8 => Segment::bytes(slice.as_bytes()),
-                #[cfg(feature = "kanji")]
-                Interpretation::ShiftJis => {
-                    // Each character reuses the conversion that admitted it, so the bytes match the planned length.
-                    let mut bytes = Vec::with_capacity(slice.len());
-
-                    for character in slice.chars() {
-                        let (encoded, length) = super::shift_jis_encoding(character)
-                            .expect("Shift JIS byte segments hold encodable characters");
-
-                        bytes.extend_from_slice(&encoded[..length]);
-                    }
-
-                    Segment::bytes(&bytes)
-                },
-                // The default, Legacy and Latin-1 interpretations hold one Table 6 byte per character.
-                _ => {
-                    let bytes: Vec<u8> = slice.chars().map(|character| character as u8).collect();
-                    Segment::bytes(&bytes)
-                },
-            },
-            #[cfg(feature = "kanji")]
-            Mode::Kanji => Segment::kanji(slice)?,
-            #[cfg(not(feature = "kanji"))]
-            Mode::Kanji => unreachable!(),
-            Mode::Eci => unreachable!(),
-        });
-    }
-    Ok(result)
+    (tables, best)
 }
 
 #[derive(Clone, Copy)]
@@ -904,6 +930,17 @@ pub(crate) fn bytes(
     profile: Profile,
     fnc1: bool,
 ) -> Result<Vec<Segment>, EncodeError> {
+    reconstruct_bytes(data, byte_steps(data, profile, fnc1), fnc1)
+}
+
+// Returns the fewest bits of every byte prefix, indexed by its length; the costs never decrease along the data.
+#[cfg_attr(not(feature = "qr"), allow(dead_code))]
+pub(crate) fn byte_costs(data: &[u8], profile: Profile, fnc1: bool) -> Vec<Option<usize>> {
+    byte_steps(data, profile, fnc1).iter().map(|step| step.map(|step| step.bits)).collect()
+}
+
+// Runs the byte dynamic program, keeping the shortest path to every offset.
+fn byte_steps(data: &[u8], profile: Profile, fnc1: bool) -> Vec<Option<ByteStep>> {
     // Each offset stores the shortest complete segmentation of the preceding bytes.
     let mut best = vec![None; data.len() + 1];
 
@@ -1054,7 +1091,7 @@ pub(crate) fn bytes(
         }
     }
 
-    reconstruct_bytes(data, best, fnc1)
+    best
 }
 
 fn reconstruct_bytes(

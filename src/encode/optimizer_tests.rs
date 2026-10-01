@@ -3,6 +3,8 @@ use alloc::{string::String, vec, vec::Vec};
 use super::*;
 
 const INFINITY: usize = usize::MAX / 2;
+// The longest input whose every prefix is checked against the reference.
+const PREFIX_CHECK_LIMIT: usize = 12;
 
 #[inline]
 fn relax(slot: &mut usize, cost: usize) {
@@ -375,6 +377,20 @@ fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, initial: Start)
 fn verify_text(text: &str, profile: Profile, fnc1: bool, start: Start) {
     let expected = reference_text_bits(text, profile, fnc1, start);
 
+    let costs = super::text_costs(text, profile, fnc1, start);
+
+    assert_eq!((expected < INFINITY).then_some(expected), costs.last().copied().flatten());
+
+    // Every prefix cost of a short input matches the optimum of that prefix on its own; longer inputs would make the quadratic reference too slow.
+    if costs.len() - 1 <= PREFIX_CHECK_LIMIT {
+        for (count, &cost) in costs.iter().enumerate() {
+            let end = text.char_indices().nth(count).map_or(text.len(), |(offset, _)| offset);
+            let prefix = reference_text_bits(&text[..end], profile, fnc1, start);
+
+            assert_eq!((prefix < INFINITY).then_some(prefix), cost, "prefix {count} of {text:?}");
+        }
+    }
+
     // Starts without ECI headers cannot represent every character.
     let Ok(plan) = super::text(text, profile, fnc1, start) else {
         assert!(expected >= INFINITY, "no plan for {text:?} fnc1={fnc1} start={start:?}");
@@ -463,6 +479,21 @@ fn reference_bytes_bits(data: &[u8], profile: Profile, fnc1: bool) -> usize {
 }
 
 fn verify_bytes(data: &[u8], profile: Profile, fnc1: bool) {
+    let costs = super::byte_costs(data, profile, fnc1);
+
+    assert_eq!(Some(reference_bytes_bits(data, profile, fnc1)), costs.last().copied().flatten());
+
+    // Every prefix cost of a short input matches the optimum of that prefix on its own; longer inputs would make the quadratic reference too slow.
+    if data.len() <= PREFIX_CHECK_LIMIT {
+        for (length, &cost) in costs.iter().enumerate() {
+            assert_eq!(
+                Some(reference_bytes_bits(&data[..length], profile, fnc1)),
+                cost,
+                "prefix {length} of {data:?}"
+            );
+        }
+    }
+
     let plan = super::bytes(data, profile, fnc1).expect("bytes always have a plan");
 
     assert_eq!(
@@ -504,6 +535,7 @@ fn starts() -> Vec<Start> {
     result
 }
 
+#[cfg_attr(not(feature = "qr"), allow(clippy::vec_init_then_push))]
 fn profiles() -> Vec<Profile> {
     let mut profiles = Vec::new();
 

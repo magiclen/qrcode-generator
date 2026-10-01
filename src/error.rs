@@ -17,10 +17,20 @@ pub enum EncodeError {
         capacity_bits: usize,
     },
     /// The input contains a byte that is not valid for the requested mode.
-    InvalidData { mode: &'static str, byte_offset: usize },
+    InvalidData {
+        /// The name of the requested mode.
+        mode:        &'static str,
+        /// The byte offset of the first invalid character in the input.
+        byte_offset: usize,
+    },
     /// The input cannot be represented by the selected symbol family.
     #[cfg(feature = "micro-qr")]
-    TextNotRepresentable { byte_offset: usize, family: &'static str },
+    TextNotRepresentable {
+        /// The byte offset of the character that cannot be represented.
+        byte_offset: usize,
+        /// The name of the symbol family.
+        family:      &'static str,
+    },
     /// The ECI assignment is outside the range supported by QR Code.
     #[cfg(any(feature = "qr", feature = "rmqr"))]
     InvalidEciAssignment(u32),
@@ -31,18 +41,28 @@ pub enum EncodeError {
     InvalidVersionRange,
     /// The selected symbol family does not support a requested mode.
     #[cfg(feature = "micro-qr")]
-    UnsupportedMode { mode: &'static str, family: &'static str },
+    UnsupportedMode {
+        /// The name of the unsupported mode.
+        mode:   &'static str,
+        /// The name of the symbol family or version.
+        family: &'static str,
+    },
     /// The selected version does not support the requested error correction level.
     #[cfg(feature = "micro-qr")]
     UnsupportedErrorCorrection {
+        /// The selected version.
         version:          SymbolVersion,
+        /// The requested error correction level.
         error_correction: SymbolErrorCorrection,
     },
     /// The requested mask number is outside the supported range.
     InvalidMask,
     /// A Structured Append sequence has fewer than one or more than 16 parts.
     #[cfg(feature = "qr")]
-    InvalidStructuredAppendPartCount { count: usize },
+    InvalidStructuredAppendPartCount {
+        /// The number of parts that was given.
+        count: usize,
+    },
 }
 
 impl fmt::Display for EncodeError {
