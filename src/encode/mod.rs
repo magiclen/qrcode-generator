@@ -1203,26 +1203,33 @@ impl QrEncoder {
             ensure_input_length(part.chars().count(), capacity, capacity_bits, 1)?;
         }
 
-        let start =
-            structured_append_start(parts.iter().any(|part| requires_non_default_eci(part)));
         let total = parts.len() as u8;
+        let mut selected: Option<SequencePlan> = None;
 
-        // Each part is optimized once, and both the shared parity and the final symbols reuse the result.
-        let mut plans = Vec::with_capacity(parts.len());
-        let mut parity = 0u8;
-
-        for part in parts {
-            let (version, segments) = self.qr_structured_plan(part, start)?;
-
-            // Parity uses the byte representation selected by the optimizer, including Shift JIS or UTF-8 bytes.
-            for segment in &segments {
-                for &byte in segment.source_bytes() {
-                    parity ^= byte;
-                }
+        // Ties keep the layout without ECI headers, which is listed first.
+        for regime in SequenceRegime::ALL {
+            if let Some(candidate) = self.structured_text_plans(parts, regime)?
+                && selected.as_ref().is_none_or(|selected| {
+                    (candidate.version, candidate.area) < (selected.version, selected.area)
+                })
+            {
+                selected = Some(candidate);
             }
-
-            plans.push((version, segments));
         }
+
+        let Some(SequencePlan {
+            parts: plans, ..
+        }) = selected
+        else {
+            return Err(self.structured_text_error(parts));
+        };
+
+        // Parity uses the byte representation selected by the optimizer, including Shift JIS or UTF-8 bytes.
+        let parity = plans
+            .iter()
+            .flat_map(|(_, segments)| segments)
+            .flat_map(|segment| segment.source_bytes().iter().copied())
+            .fold(0, |parity, byte| parity ^ byte);
 
         plans
             .into_iter()
@@ -1245,12 +1252,12 @@ impl QrEncoder {
             .collect()
     }
 
-    // Picks the smallest version that fits one Structured Append part and returns its optimized segments.
+    // Picks the smallest version that fits one Structured Append part and returns its optimized segments, or `None` when no version fits.
     fn qr_structured_plan(
         &self,
         text: &str,
         start: optimizer::Start,
-    ) -> Result<(QrVersion, Vec<Segment>), EncodeError> {
+    ) -> Result<Option<(QrVersion, Vec<Segment>)>, EncodeError> {
         if self.versions.start() > self.versions.end() {
             return Err(EncodeError::InvalidVersionRange);
         }
@@ -1266,22 +1273,166 @@ impl QrEncoder {
 
         for value in range.start().0..=range.end().0 {
             let version = QrVersion(value);
-            let segments = cache.get(version)?;
+
+            // A start without ECI headers has no plan for characters that need one.
+            let Ok(segments) = cache.get(version) else {
+                return Ok(None);
+            };
 
             if model2::fits(segments, version, self.error_correction, self.fnc1, Some(header)) {
-                return Ok((version, segments.to_vec()));
+                return Ok(Some((version, segments.to_vec())));
             }
         }
 
-        // No version fits, so the largest one is returned to reproduce the same capacity error later.
-        let version = *range.end();
+        Ok(None)
+    }
 
-        Ok((version, cache.take(version)?))
+    // Plans every caller-selected part in one ECI layout, minimizing the largest version and then the total area.
+    // A part that leaves an ECI in force makes every later part declare one again.
+    fn structured_text_plans(
+        &self,
+        parts: &[&str],
+        regime: SequenceRegime,
+    ) -> Result<Option<SequencePlan>, EncodeError> {
+        if !regime.suits(&parts.concat()) {
+            return Ok(None);
+        }
+
+        // Candidate plans of each part, indexed by whether an ECI is in force before it.
+        let mut options = Vec::with_capacity(parts.len());
+
+        for (index, part) in parts.iter().enumerate() {
+            let mut by_state: [Vec<(QrVersion, Vec<Segment>, bool)>; 2] = [Vec::new(), Vec::new()];
+
+            for eci_in_force in [false, true] {
+                // The first part never follows an ECI, and the layout without ECI headers never has one in force.
+                if eci_in_force && (index == 0 || regime != SequenceRegime::Standard) {
+                    continue;
+                }
+
+                for &(start, _) in regime.starts(eci_in_force) {
+                    if let Some((version, segments)) = self.qr_structured_plan(part, start)? {
+                        let leaves_eci = eci_in_force
+                            || segments.iter().any(|segment| segment.mode == Mode::Eci);
+
+                        by_state[usize::from(eci_in_force)].push((version, segments, leaves_eci));
+                    }
+                }
+            }
+
+            options.push(by_state);
+        }
+
+        let mut caps: Vec<QrVersion> = options
+            .iter()
+            .flat_map(|by_state| by_state.iter().flatten().map(|(version, ..)| *version))
+            .collect();
+
+        caps.sort_unstable();
+        caps.dedup();
+
+        for cap in caps {
+            // Each entry holds the smallest area to reach the part boundary with or without an ECI in force, and its back pointer.
+            let mut best: Vec<[Option<(usize, usize, usize)>; 2]> =
+                vec![[None; 2]; parts.len() + 1];
+
+            best[0][0] = Some((0, 0, 0));
+
+            for (index, by_state) in options.iter().enumerate() {
+                for eci_in_force in [false, true] {
+                    let Some((area, ..)) = best[index][usize::from(eci_in_force)] else {
+                        continue;
+                    };
+
+                    for (choice, (version, _, leaves_eci)) in
+                        by_state[usize::from(eci_in_force)].iter().enumerate()
+                    {
+                        if *version > cap {
+                            continue;
+                        }
+
+                        let size = usize::from(version.value()) * 4 + 17;
+                        let candidate = (area + size * size, usize::from(eci_in_force), choice);
+                        let slot = &mut best[index + 1][usize::from(*leaves_eci)];
+
+                        if slot.is_none_or(|current| candidate.0 < current.0) {
+                            *slot = Some(candidate);
+                        }
+                    }
+                }
+            }
+
+            let Some((mut state, area)) = (0..2)
+                .filter_map(|state| best[parts.len()][state].map(|(area, ..)| (state, area)))
+                .min_by_key(|&(_, area)| area)
+            else {
+                continue;
+            };
+
+            let mut plans = Vec::with_capacity(parts.len());
+
+            for index in (0..parts.len()).rev() {
+                let (_, previous, choice) = best[index + 1][state].expect("the path is reachable");
+                let (version, segments, _) = options[index][previous][choice].clone();
+
+                plans.push((version, segments));
+                state = previous;
+            }
+
+            plans.reverse();
+
+            return Ok(Some(SequencePlan {
+                version: cap,
+                area,
+                parts: plans,
+            }));
+        }
+
+        Ok(None)
+    }
+
+    // Reproduces the capacity error of the first part that no version can hold.
+    fn structured_text_error(&self, parts: &[&str]) -> EncodeError {
+        let version = *self.versions.end();
+        let capacity_error = EncodeError::DataTooLong {
+            required_bits: None,
+            capacity_bits: model2::data_codewords(version, self.error_correction) * 8,
+        };
+
+        // Later parts may have to restate an ECI, so they are measured with an explicit one.
+        for (index, part) in parts.iter().enumerate() {
+            let start =
+                if index == 0 { optimizer::Start::Default } else { optimizer::Start::Explicit };
+            let Ok(segments) =
+                optimizer::text(part, optimizer::Profile::qr(version), self.fnc1.is_some(), start)
+            else {
+                continue;
+            };
+
+            if let Err(error) = model2::encode(
+                &segments,
+                version,
+                self.error_correction,
+                self.mask,
+                false,
+                self.fnc1,
+                Some(StructuredAppendInfo {
+                    index:  index as u8,
+                    total:  parts.len() as u8,
+                    parity: 0,
+                }),
+            ) {
+                return error;
+            }
+        }
+
+        capacity_error
     }
 
     /// Encodes caller-selected segment parts as one Structured Append sequence.
     ///
     /// Each part must include its own ECI headers before the data that needs them; ECI state is not copied from earlier parts.
+    /// A Kanji segment without a Shift JIS ECI segment before it reads as Shift JIS only when no part of the sequence has an ECI segment.
     ///
     /// ```rust
     /// use qrcode_generator::{Segment, qr::{EciAssignment, Encoder, ErrorCorrection}};
@@ -1402,7 +1553,7 @@ impl QrEncoder {
 
         ensure_input_length(text.chars().count(), capacity, capacity_bits, 16)?;
 
-        let offsets = text_boundaries(text);
+        let input = SplitText::new(text);
 
         // Partitioning failures replace internal placeholder errors with the full sequence capacity.
         let sequence_capacity_error = || EncodeError::DataTooLong {
@@ -1410,37 +1561,60 @@ impl QrEncoder {
             capacity_bits: model2::data_codewords(*range.end(), self.error_correction) * 8 * 16,
         };
 
-        // Text partitions use scalar boundaries so no UTF-8 character is split between symbols.
-        let minimum_parts = self
-            .partition_text(text, &offsets, range.clone())
-            .map_err(|_| sequence_capacity_error())?
-            .len();
+        // Each ECI layout is searched on its own, because one ECI anywhere changes how Kanji mode reads in every part.
+        // The sequence then minimizes the symbol count, the largest version and the total area, and ties keep the layout without ECI headers.
+        let mut selected: Option<SequencePartition> = None;
 
-        let mut selected = None;
+        for regime in SequenceRegime::ALL {
+            if !regime.suits(text) {
+                continue;
+            }
 
-        for value in range.start().value()..=range.end().value() {
-            let candidate = QrVersion(value);
+            // Text partitions use scalar boundaries so no UTF-8 character is split between symbols.
+            let Some(minimum_parts) = self.minimum_text_parts(&input, range.clone(), regime) else {
+                continue;
+            };
 
-            if let Ok(parts) = self.partition_text(text, &offsets, *range.start()..=candidate)
-                && parts.len() == minimum_parts
-            {
-                selected = Some(
-                    self.minimum_area_text_partition(
-                        text,
-                        &offsets,
-                        minimum_parts,
-                        *range.start()..=candidate,
-                    )
-                    .map_err(|_| sequence_capacity_error())?,
-                );
-                break;
+            if selected.as_ref().is_some_and(|selected| minimum_parts > selected.count) {
+                continue;
+            }
+
+            for value in range.start().value()..=range.end().value() {
+                let candidate = QrVersion(value);
+
+                if self.minimum_text_parts(&input, *range.start()..=candidate, regime)
+                    == Some(minimum_parts)
+                {
+                    let (area, parts) = self
+                        .minimum_area_text_partition(
+                            &input,
+                            minimum_parts,
+                            *range.start()..=candidate,
+                            regime,
+                        )
+                        .map_err(|_| sequence_capacity_error())?;
+
+                    if selected.as_ref().is_none_or(|selected| {
+                        (minimum_parts, candidate, area)
+                            < (selected.count, selected.version, selected.area)
+                    }) {
+                        selected = Some(SequencePartition {
+                            count: minimum_parts,
+                            version: candidate,
+                            area,
+                            parts,
+                        });
+                    }
+
+                    break;
+                }
             }
         }
 
-        let parts = selected.ok_or_else(sequence_capacity_error)?;
+        let parts = selected.ok_or_else(sequence_capacity_error)?.parts;
 
         let slices: Vec<&str> =
-            parts.into_iter().map(|(start, end)| &text[offsets[start]..offsets[end]]).collect();
+            parts.into_iter().map(|(start, end)| input.slice(start, end)).collect();
         self.encode_structured_append_text(&slices)
     }
 
@@ -1521,55 +1695,90 @@ impl QrEncoder {
         Ok(result)
     }
 
-    fn partition_text(
+    // Counts the fewest parts of one ECI layout, keeping per layer the farthest end with and without an ECI in force.
+    fn minimum_text_parts(
         &self,
-        text: &str,
-        offsets: &[usize],
+        input: &SplitText<'_>,
         range: RangeInclusive<QrVersion>,
-    ) -> Result<Vec<(usize, usize)>, EncodeError> {
-        let maximum_version = *range.end();
-        let initial = structured_append_start(requires_non_default_eci(text));
+        regime: SequenceRegime,
+    ) -> Option<usize> {
+        let length = input.len();
+        let mut layer = vec![(0, false)];
 
-        let mut result = Vec::new();
-        let mut start = 0;
-        let length = offsets.len() - 1;
+        for count in 1..=16 {
+            let mut farthest = [None; 2];
 
-        while start < length {
-            if result.len() == 16 {
-                return Err(EncodeError::DataTooLong {
-                    required_bits: None, capacity_bits: 0
-                });
-            }
+            for &(start, eci_in_force) in &layer {
+                for (end, leaves_eci) in self
+                    .text_part_ends(input, start, eci_in_force, regime, range.clone())
+                    .into_iter()
+                    .flatten()
+                {
+                    if end == length {
+                        return Some(count);
+                    }
 
-            let mut low = start + 1;
+                    let slot = &mut farthest[usize::from(leaves_eci)];
 
-            // Numeric mode gives the largest possible scalar capacity for any text input.
-            let mut high =
-                length.min(start.saturating_add(self.qr_character_upper_bound(maximum_version)));
-
-            let mut fitting = None;
-
-            while low <= high {
-                let middle = low + (high - low) / 2;
-
-                if self.text_fits(&text[offsets[start]..offsets[middle]], range.clone(), initial) {
-                    fitting = Some(middle);
-                    low = middle + 1;
-                } else {
-                    high = middle - 1;
+                    if slot.is_none_or(|current| end > current) {
+                        *slot = Some(end);
+                    }
                 }
             }
 
-            let end = fitting
-                .ok_or(EncodeError::DataTooLong {
-                    required_bits: None, capacity_bits: 0
-                })?;
+            // A start without an ECI in force dominates one with it at the same or a nearer end.
+            layer.clear();
+            layer.extend(farthest[0].map(|end| (end, false)));
 
-            result.push((start, end));
+            if let Some(end) = farthest[1]
+                && farthest[0].is_none_or(|free| end > free)
+            {
+                layer.push((end, true));
+            }
 
-            start = end;
+            if layer.is_empty() {
+                return None;
+            }
         }
-        Ok(result)
+
+        None
+    }
+
+    // Finds the farthest ends one text part can reach from a start, each with whether it may leave an ECI in force.
+    // A start that may leave an ECI in force is only listed when it reaches farther than the starts that cannot.
+    fn text_part_ends(
+        &self,
+        input: &SplitText<'_>,
+        start: usize,
+        eci_in_force: bool,
+        regime: SequenceRegime,
+        range: RangeInclusive<QrVersion>,
+    ) -> [Option<(usize, bool)>; 2] {
+        // Numeric mode gives the largest possible scalar capacity for any text input.
+        let high =
+            input.len().min(start.saturating_add(self.qr_character_upper_bound(*range.end())));
+        let mut result = [None; 2];
+        let mut farthest = None;
+
+        for (index, &(mode, leaves_eci)) in regime.starts(eci_in_force).iter().enumerate() {
+            // Without a character in reach that an ECI could help, a plan allowed to declare one reaches no farther.
+            if leaves_eci && !eci_in_force && input.eci_useful_from[start] >= high {
+                continue;
+            }
+
+            let end = maximum_fitting_end(high, start, |end| {
+                self.text_fits(input.slice(start, end), range.clone(), mode)
+            });
+
+            if let Some(end) = end
+                && farthest.is_none_or(|farthest| end > farthest)
+            {
+                result[index] = Some((end, leaves_eci));
+                farthest = Some(end);
+            }
+        }
+
+        result
     }
 
     fn minimum_area_byte_partition(
@@ -1578,31 +1787,30 @@ impl QrEncoder {
         part_count: usize,
         range: RangeInclusive<QrVersion>,
     ) -> Result<Vec<(usize, usize)>, EncodeError> {
-        minimum_area_partition(data.len(), part_count, range, |start, version| {
-            let high = data.len().min(start.saturating_add(self.qr_character_upper_bound(version)));
+        // Byte data never declares an ECI, so every part ends without one in force.
+        let (_, parts) =
+            minimum_area_partition(data.len(), part_count, range, |start, _, version| {
+                let high =
+                    data.len().min(start.saturating_add(self.qr_character_upper_bound(version)));
+                let end = maximum_fitting_end(high, start, |end| {
+                    self.bytes_fit(&data[start..end], version..=version)
+                });
 
-            maximum_fitting_end(high, start, |end| {
-                self.bytes_fit(&data[start..end], version..=version)
-            })
-        })
+                [end.map(|end| (end, false)), None]
+            })?;
+
+        Ok(parts)
     }
 
     fn minimum_area_text_partition(
         &self,
-        text: &str,
-        offsets: &[usize],
+        input: &SplitText<'_>,
         part_count: usize,
         range: RangeInclusive<QrVersion>,
-    ) -> Result<Vec<(usize, usize)>, EncodeError> {
-        let length = offsets.len() - 1;
-        let initial = structured_append_start(requires_non_default_eci(text));
-
-        minimum_area_partition(length, part_count, range, |start, version| {
-            let high = length.min(start.saturating_add(self.qr_character_upper_bound(version)));
-
-            maximum_fitting_end(high, start, |end| {
-                self.text_fits(&text[offsets[start]..offsets[end]], version..=version, initial)
-            })
+        regime: SequenceRegime,
+    ) -> Result<(usize, Vec<(usize, usize)>), EncodeError> {
+        minimum_area_partition(input.len(), part_count, range, |start, eci_in_force, version| {
+            self.text_part_ends(input, start, eci_in_force, regime, version..=version)
         })
     }
 
@@ -2186,23 +2394,30 @@ impl AutoEncoder {
 #[cfg(feature = "qr")]
 #[derive(Clone, Copy)]
 struct PartitionState {
-    end:      usize,
-    area:     usize,
-    previous: usize,
+    end:          usize,
+    area:         usize,
+    previous:     usize,
+    // Whether an ECI is in force at the end, so the next part must declare one again.
+    eci_in_force: bool,
 }
 
+// Finds the partition into exactly `part_count` parts with the smallest total symbol area, and returns that area with the parts.
+// `part_ends` lists the farthest ends one part can reach from a start in one version, each with the ECI state it leaves.
 #[cfg(feature = "qr")]
 fn minimum_area_partition<F>(
     length: usize,
     part_count: usize,
     range: RangeInclusive<QrVersion>,
-    mut maximum_end: F,
-) -> Result<Vec<(usize, usize)>, EncodeError>
+    mut part_ends: F,
+) -> Result<(usize, Vec<(usize, usize)>), EncodeError>
 where
-    F: FnMut(usize, QrVersion) -> Option<usize>, {
+    F: FnMut(usize, bool, QrVersion) -> [Option<(usize, bool)>; 2], {
     // Each layer represents one additional symbol in the fixed-size Structured Append sequence.
     let mut layers = vec![vec![PartitionState {
-        end: 0, area: 0, previous: 0
+        end:          0,
+        area:         0,
+        previous:     0,
+        eci_in_force: false,
     }]];
 
     for _ in 0..part_count {
@@ -2212,37 +2427,45 @@ where
         for (previous, state) in previous_layer.iter().enumerate() {
             for value in range.start().value()..=range.end().value() {
                 let version = QrVersion(value);
-
-                let Some(end) = maximum_end(state.end, version) else {
-                    continue;
-                };
-
                 let size = usize::from(version.value()) * 4 + 17;
 
-                let candidate = PartitionState {
-                    end,
-                    area: state.area + size * size,
-                    previous,
-                };
+                for (end, eci_in_force) in
+                    part_ends(state.end, state.eci_in_force, version).into_iter().flatten()
+                {
+                    let candidate = PartitionState {
+                        end,
+                        area: state.area + size * size,
+                        previous,
+                        eci_in_force,
+                    };
 
-                by_end
-                    .entry(end)
-                    .and_modify(|current: &mut PartitionState| {
-                        if candidate.area < current.area {
-                            *current = candidate;
-                        }
-                    })
-                    .or_insert(candidate);
+                    // The key orders states without an ECI in force after the others at the same end, so they come first in reverse.
+                    by_end
+                        .entry((end, !eci_in_force))
+                        .and_modify(|current: &mut PartitionState| {
+                            if candidate.area < current.area {
+                                *current = candidate;
+                            }
+                        })
+                        .or_insert(candidate);
+                }
             }
         }
 
+        let mut best_free_area = usize::MAX;
         let mut best_area = usize::MAX;
         let mut layer = Vec::new();
 
+        // A state that reaches farther with no greater area dominates every earlier state, unless only the earlier one is free of an ECI in force.
         for state in by_end.into_values().rev() {
-            // A state that reaches farther with no greater area dominates every earlier state.
-            if state.area < best_area {
-                best_area = state.area;
+            if state.eci_in_force {
+                if state.area < best_area {
+                    best_area = state.area;
+                    layer.push(state);
+                }
+            } else if state.area < best_free_area {
+                best_free_area = state.area;
+                best_area = best_area.min(state.area);
                 layer.push(state);
             }
         }
@@ -2258,11 +2481,15 @@ where
         layers.push(layer);
     }
 
-    let mut state_index = layers[part_count].iter().position(|state| state.end == length).ok_or(
-        EncodeError::DataTooLong {
+    let (mut state_index, area) = layers[part_count]
+        .iter()
+        .enumerate()
+        .filter(|(_, state)| state.end == length)
+        .map(|(index, state)| (index, state.area))
+        .min_by_key(|&(_, area)| area)
+        .ok_or(EncodeError::DataTooLong {
             required_bits: None, capacity_bits: 0
-        },
-    )?;
+        })?;
 
     let mut result = Vec::with_capacity(part_count);
 
@@ -2275,7 +2502,7 @@ where
 
     result.reverse();
 
-    Ok(result)
+    Ok((area, result))
 }
 
 #[cfg(feature = "qr")]
@@ -2363,12 +2590,6 @@ impl<F: FnMut(QrVersion) -> Result<Vec<Segment>, EncodeError>> GroupCache<F> {
 
         Ok(self.cache[group].as_deref().expect("the version group is cached"))
     }
-
-    fn take(&mut self, version: QrVersion) -> Result<Vec<Segment>, EncodeError> {
-        self.get(version)?;
-
-        Ok(self.cache[version_group(version)].take().expect("the version group is cached"))
-    }
 }
 
 #[cfg(feature = "qr")]
@@ -2383,22 +2604,124 @@ const fn validate_part_count(count: usize) -> Result<(), EncodeError> {
     }
 }
 
+// A text prepared for Structured Append splitting at character boundaries.
 #[cfg(feature = "qr")]
-fn text_boundaries(text: &str) -> Vec<usize> {
-    let mut result: Vec<_> = text.char_indices().map(|(offset, _)| offset).collect();
-    result.push(text.len());
-    result
-}
-
-// Every part after the first non-Table 6 character must declare its ECI, and Kanji mode needs an explicit Shift JIS ECI in a sequence that may contain ECI headers.
-#[cfg(feature = "qr")]
-#[inline]
-const fn structured_append_start(force_initial_eci: bool) -> optimizer::Start {
-    if force_initial_eci { optimizer::Start::Explicit } else { optimizer::Start::Default }
+struct SplitText<'a> {
+    text:            &'a str,
+    // Byte offsets of every character boundary, ending with the text length.
+    offsets:         Vec<usize>,
+    // The index of the first character at or after each position that could make an ECI header worthwhile, or the length when none follows.
+    eci_useful_from: Vec<usize>,
 }
 
 #[cfg(feature = "qr")]
+impl<'a> SplitText<'a> {
+    fn new(text: &'a str) -> Self {
+        let mut offsets: Vec<usize> = text.char_indices().map(|(offset, _)| offset).collect();
+
+        offsets.push(text.len());
+
+        let useful: Vec<bool> = text.chars().map(eci_may_help).collect();
+        let mut eci_useful_from = vec![useful.len(); useful.len() + 1];
+
+        for index in (0..useful.len()).rev() {
+            eci_useful_from[index] = if useful[index] { index } else { eci_useful_from[index + 1] };
+        }
+
+        Self {
+            text,
+            offsets,
+            eci_useful_from,
+        }
+    }
+
+    // Returns the number of characters.
+    #[inline]
+    fn len(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    // Returns the characters in `start..end`.
+    #[inline]
+    fn slice(&self, start: usize, end: usize) -> &'a str {
+        &self.text[self.offsets[start]..self.offsets[end]]
+    }
+}
+
+// Reports whether an ECI header could shorten the plan of a character: it has no Table 6 byte, or Kanji mode under ECI 000020 can hold it.
+#[cfg(feature = "qr")]
 #[inline]
-fn requires_non_default_eci(text: &str) -> bool {
-    text.chars().any(|character| !is_latin1_character(character))
+fn eci_may_help(character: char) -> bool {
+    #[cfg(feature = "kanji")]
+    if kanji_encoding(character).is_some() {
+        return true;
+    }
+
+    !is_latin1_character(character)
+}
+
+// The parts planned for a Structured Append text sequence, with its largest version and total area.
+#[cfg(feature = "qr")]
+struct SequencePlan {
+    version: QrVersion,
+    area:    usize,
+    parts:   Vec<(QrVersion, Vec<Segment>)>,
+}
+
+// The character ranges chosen for an automatically split Structured Append text sequence, with its symbol count, largest version and total area.
+#[cfg(feature = "qr")]
+struct SequencePartition {
+    count:   usize,
+    version: QrVersion,
+    area:    usize,
+    parts:   Vec<(usize, usize)>,
+}
+
+// The ECI layouts a Structured Append text sequence can use, because a reader joins its parts into one data stream.
+#[cfg(feature = "qr")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SequenceRegime {
+    // No part declares an ECI, so Kanji mode without an ECI header reads as Shift JIS throughout the sequence.
+    #[cfg(feature = "kanji")]
+    Legacy,
+    // Kanji mode follows an explicit Shift JIS ECI, and every part after the first ECI declares its own.
+    Standard,
+}
+
+#[cfg(feature = "qr")]
+impl SequenceRegime {
+    #[cfg(feature = "kanji")]
+    const ALL: [Self; 2] = [Self::Legacy, Self::Standard];
+    #[cfg(not(feature = "kanji"))]
+    const ALL: [Self; 1] = [Self::Standard];
+
+    // Lists the start modes of a part, each with whether its plan may leave an ECI in force for the next part.
+    #[inline]
+    const fn starts(self, eci_in_force: bool) -> &'static [(optimizer::Start, bool)] {
+        match self {
+            #[cfg(feature = "kanji")]
+            Self::Legacy => &[(optimizer::Start::Legacy, false)],
+            // A part after an ECI must declare it again right after the Structured Append header.
+            Self::Standard if eci_in_force => &[(optimizer::Start::Explicit, true)],
+            Self::Standard => {
+                &[(optimizer::Start::DefaultEciFree, false), (optimizer::Start::Default, true)]
+            },
+        }
+    }
+
+    // Reports whether this layout can hold every character and may do better than the standard layout.
+    #[cfg_attr(not(feature = "kanji"), allow(unused_variables))]
+    fn suits(self, text: &str) -> bool {
+        match self {
+            // Without any Kanji character, the standard layout already covers every plan without ECI headers.
+            #[cfg(feature = "kanji")]
+            Self::Legacy => {
+                text.chars().any(|character| kanji_encoding(character).is_some())
+                    && text.chars().all(|character| {
+                        is_legacy_byte_character(character) || kanji_encoding(character).is_some()
+                    })
+            },
+            Self::Standard => true,
+        }
+    }
 }

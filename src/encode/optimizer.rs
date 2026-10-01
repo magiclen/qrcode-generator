@@ -127,9 +127,16 @@ pub(crate) enum Start {
     // The default interpretation without Kanji mode, which may switch to explicit ECIs later.
     #[cfg_attr(not(feature = "qr"), allow(dead_code))]
     Default,
+    // The default interpretation without Kanji mode or any ECI header, as in a Structured Append part that must not start an ECI.
+    #[cfg_attr(not(feature = "qr"), allow(dead_code))]
+    DefaultEciFree,
     // An explicit ECI header must start the data, as in a Structured Append part after an earlier ECI.
     #[cfg_attr(not(feature = "qr"), allow(dead_code))]
     Explicit,
+    // A symbol without any ECI header that may use Kanji mode, as in a Structured Append sequence without ECI headers.
+    #[cfg(feature = "kanji")]
+    #[cfg_attr(not(feature = "qr"), allow(dead_code))]
+    Legacy,
 }
 
 #[derive(Clone, Copy)]
@@ -322,8 +329,12 @@ pub(crate) fn text(
                 best[0][Interpretation::Legacy.index()] = Some(initial(Interpretation::Legacy));
             }
         },
-        Start::Default => {
+        Start::Default | Start::DefaultEciFree => {
             best[0][Interpretation::Default.index()] = Some(initial(Interpretation::Default));
+        },
+        #[cfg(feature = "kanji")]
+        Start::Legacy => {
+            best[0][Interpretation::Legacy.index()] = Some(initial(Interpretation::Legacy));
         },
         // A following Structured Append symbol must declare the interpretation that starts its data.
         Start::Explicit => {
@@ -340,6 +351,7 @@ pub(crate) fn text(
         },
     }
 
+    let allow_eci = start != Start::DefaultEciFree;
     let eci_bits = profile.eci_bits();
     let numeric_overhead = profile.overhead_bits(Mode::Numeric);
     let alnum_overhead = profile.overhead_bits(Mode::Alphanumeric);
@@ -576,6 +588,8 @@ pub(crate) fn text(
             }
 
             let bits = step.bits as isize;
+            // A symbol that never declares an ECI cannot switch to an explicit interpretation.
+            let can_switch = allow_eci && !state.is_legacy();
 
             // A start only enters a queue when its mode can extend through the character here.
             // A byte segment kept in an interpretation without an ECI header can only continue a prefix of the same interpretation.
@@ -616,8 +630,7 @@ pub(crate) fn text(
                 });
             }
 
-            // A symbol that never declares an ECI cannot switch to an explicit interpretation.
-            if !state.is_legacy() {
+            if can_switch {
                 let switched = state != Interpretation::Utf8;
                 let coordinate = tables.offsets[position];
 
@@ -634,7 +647,7 @@ pub(crate) fn text(
             }
 
             #[cfg(feature = "kanji")]
-            if !state.is_legacy() && tables.sjis_ok[position] {
+            if can_switch && tables.sjis_ok[position] {
                 let switched = state != Interpretation::ShiftJis;
                 let coordinate = tables.sjis_prefix[position];
 
@@ -688,7 +701,7 @@ pub(crate) fn text(
                         step,
                         active: state,
                     });
-                } else {
+                } else if can_switch {
                     // The default interpretation may still meet an ECI later, so its Kanji data declares Shift JIS first.
                     let switched = state != Interpretation::ShiftJis;
 

@@ -193,13 +193,13 @@ fn decode_alphanumeric(segment: &Segment, fnc1: bool) -> Vec<u8> {
 }
 
 // A direct quadratic reference that explores every legal edge, confirming bit optimality.
-fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, start: Start) -> usize {
+fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, initial: Start) -> usize {
     let tables = TextTables::new(text, fnc1);
     let length = tables.offsets.len() - 1;
     let eci_bits = profile.eci_bits();
     let mut best = vec![[INFINITY; Interpretation::COUNT]; length + 1];
 
-    match start {
+    match initial {
         Start::Free => {
             best[0][Interpretation::Default.index()] = 0;
 
@@ -208,7 +208,9 @@ fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, start: Start) -
                 best[0][Interpretation::Legacy.index()] = 0;
             }
         },
-        Start::Default => best[0][Interpretation::Default.index()] = 0,
+        Start::Default | Start::DefaultEciFree => best[0][Interpretation::Default.index()] = 0,
+        #[cfg(feature = "kanji")]
+        Start::Legacy => best[0][Interpretation::Legacy.index()] = 0,
         Start::Explicit => {
             for interpretation in Interpretation::ALL {
                 if interpretation.eci().is_some() {
@@ -302,6 +304,11 @@ fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, start: Start) -
                 continue;
             }
 
+            // Every remaining edge leaves the default interpretation through an ECI header.
+            if initial == Start::DefaultEciFree {
+                continue;
+            }
+
             {
                 let switch = usize::from(state != Interpretation::Utf8) * eci_bits;
 
@@ -366,8 +373,13 @@ fn reference_text_bits(text: &str, profile: Profile, fnc1: bool, start: Start) -
 }
 
 fn verify_text(text: &str, profile: Profile, fnc1: bool, start: Start) {
-    let plan = super::text(text, profile, fnc1, start).expect("text always has a plan");
     let expected = reference_text_bits(text, profile, fnc1, start);
+
+    // Starts without ECI headers cannot represent every character.
+    let Ok(plan) = super::text(text, profile, fnc1, start) else {
+        assert!(expected >= INFINITY, "no plan for {text:?} fnc1={fnc1} start={start:?}");
+        return;
+    };
 
     assert_eq!(
         expected,
@@ -375,6 +387,10 @@ fn verify_text(text: &str, profile: Profile, fnc1: bool, start: Start) {
         "bits differ for {text:?} fnc1={fnc1} start={start:?}"
     );
     assert_eq!(text, decode_plan(&plan, fnc1), "readback differs for {text:?}");
+
+    if start == Start::DefaultEciFree {
+        assert!(plan.iter().all(|segment| segment.mode != Mode::Eci));
+    }
 
     if start == Start::Explicit {
         assert!(matches!(plan.first(), Some(segment) if segment.mode == Mode::Eci));
@@ -474,6 +490,16 @@ fn text_alphabet() -> Vec<char> {
 
     #[cfg(feature = "kanji")]
     result.extend(['点', 'ﾃ', '¥', '−', '－', '×']);
+
+    result
+}
+
+fn starts() -> Vec<Start> {
+    #[allow(unused_mut)]
+    let mut result = vec![Start::Free, Start::Default, Start::DefaultEciFree, Start::Explicit];
+
+    #[cfg(feature = "kanji")]
+    result.push(Start::Legacy);
 
     result
 }
@@ -585,7 +611,7 @@ fn text_plans_are_bit_optimal_for_all_short_inputs() {
     for input in &inputs {
         for &profile in &profiles {
             for fnc1 in [false, true] {
-                for start in [Start::Free, Start::Default, Start::Explicit] {
+                for start in starts() {
                     verify_text(input, profile, fnc1, start);
                 }
             }
@@ -609,7 +635,8 @@ fn text_plans_are_bit_optimal_for_random_inputs() {
             input.push(alphabet[(state >> 33) as usize % alphabet.len()]);
         }
 
-        let start = [Start::Free, Start::Default, Start::Explicit][round / 2 % 3];
+        let starts = starts();
+        let start = starts[round / 2 % starts.len()];
 
         verify_text(&input, profiles()[0], round % 2 == 0, start);
     }

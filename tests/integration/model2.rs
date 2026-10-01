@@ -2,7 +2,7 @@ use std::cell::Cell;
 
 use qrcode_generator::{
     EncodeError, Segment, SymbolErrorCorrection, SymbolVersion, ToQRText,
-    qr::{ApplicationIndicator, Encoder, ErrorCorrection, Fnc1, Mask, Version},
+    qr::{ApplicationIndicator, EciAssignment, Encoder, ErrorCorrection, Fnc1, Mask, Version},
 };
 
 use super::{
@@ -230,8 +230,6 @@ fn mixed_utf8_and_kanji_text_round_trips() {
 #[cfg(feature = "kanji")]
 #[test]
 fn kanji_before_another_eci_declares_shift_jis() {
-    use qrcode_generator::qr::EciAssignment;
-
     let text = "日本語😀";
     let encoder = Encoder::new(ErrorCorrection::Medium);
     let symbol = encoder.encode_text(text).unwrap();
@@ -263,6 +261,28 @@ fn structured_append_kanji_parts_round_trip() {
         let (image, size) = render_square(symbol, 8);
         assert_eq!(expected, decode_square(image, size));
     }
+
+    // Kanji-only parts need no ECI header when the whole sequence has none.
+    let first = [Segment::kanji(parts[0]).unwrap()];
+    let second = [Segment::kanji(parts[1]).unwrap()];
+
+    assert_eq!(
+        Encoder::new(ErrorCorrection::Medium)
+            .encode_structured_append_segments(&[&first, &second])
+            .unwrap(),
+        symbols
+    );
+}
+
+// Parts before the first character that needs an ECI carry no ECI header.
+#[test]
+fn structured_append_text_declares_eci_only_after_it_is_needed() {
+    let encoder = Encoder::new(ErrorCorrection::Medium);
+    let symbols = encoder.encode_structured_append_text(&["ABC", "☕"]).unwrap();
+    let first = [Segment::alphanumeric("ABC").unwrap()];
+    let second = [Segment::eci(EciAssignment::UTF_8), Segment::bytes("☕".as_bytes())];
+
+    assert_eq!(encoder.encode_structured_append_segments(&[&first, &second]).unwrap(), symbols);
 }
 
 // A Structured Append sequence shares one parity byte and reassembles to the whole message.

@@ -274,7 +274,7 @@ let symbols = Encoder::new(ErrorCorrection::Medium)
 println!("{} symbols", symbols.len());
 ```
 
-Automatic splitting first minimizes the number of symbols, then their largest version, and finally the total symbol area.
+Automatic splitting first minimizes the number of symbols, then their largest version, and finally the total symbol area. A reader joins the parts into one data stream, so the text encoders declare an ECI only from the part that first needs it, repeat it at the start of every later part, and use Kanji mode without an ECI header only in a sequence that has no ECI header at all.
 
 With `encode_structured_append_segments`, each part must include its own ECI headers before the data that needs them; ECI state is not copied from earlier parts.
 
