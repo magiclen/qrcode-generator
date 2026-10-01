@@ -1,6 +1,6 @@
 [package]
 name = "qrcode-generator"
-version = "6.1.0"
+version = "6.1.1"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2024"
 rust-version = "1.89"
