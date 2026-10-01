@@ -309,6 +309,18 @@ pub(crate) fn text(
     // Each position keeps the shortest path for every interpretation that can be in force there.
     let mut best = vec![[None; Interpretation::COUNT]; length + 1];
 
+    // Whether a Kanji mode character appears at or after each position.
+    #[cfg(feature = "kanji")]
+    let kanji_ahead = {
+        let mut result = vec![false; length + 1];
+
+        for position in (0..length).rev() {
+            result[position] = tables.kanji_ok[position] || result[position + 1];
+        }
+
+        result
+    };
+
     let initial = |interpretation| TextStep {
         bits: 0,
         switches: 0,
@@ -324,8 +336,9 @@ pub(crate) fn text(
         Start::Free => {
             best[0][Interpretation::Default.index()] = Some(initial(Interpretation::Default));
 
+            // Legacy only differs from the default interpretation through Kanji mode.
             #[cfg(feature = "kanji")]
-            {
+            if kanji_ahead[0] {
                 best[0][Interpretation::Legacy.index()] = Some(initial(Interpretation::Legacy));
             }
         },
@@ -352,6 +365,7 @@ pub(crate) fn text(
     }
 
     let allow_eci = start != Start::DefaultEciFree;
+
     let eci_bits = profile.eci_bits();
     let numeric_overhead = profile.overhead_bits(Mode::Numeric);
     let alnum_overhead = profile.overhead_bits(Mode::Alphanumeric);
@@ -583,6 +597,15 @@ pub(crate) fn text(
             // A default prefix replays any continuation of this state by paying its ECI header later, so the state is not a useful source.
             if state.eci().is_some()
                 && default_bits.is_some_and(|bits| step.bits >= bits + eci_bits)
+            {
+                continue;
+            }
+
+            // Kanji mode is the only edge Legacy has over the default interpretation, so without Kanji ahead a default prefix replays it.
+            #[cfg(feature = "kanji")]
+            if state.is_legacy()
+                && !kanji_ahead[position]
+                && default_bits.is_some_and(|bits| step.bits >= bits)
             {
                 continue;
             }
