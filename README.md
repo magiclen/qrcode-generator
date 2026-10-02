@@ -1,6 +1,7 @@
 QR Code Generator
 =================
 
+[![Docs](https://docs.rs/qrcode-generator/badge.svg)](https://docs.rs/qrcode-generator)
 [![CI](https://github.com/magiclen/qrcode-generator/actions/workflows/ci.yml/badge.svg)](https://github.com/magiclen/qrcode-generator/actions/workflows/ci.yml)
 
 This crate generates ISO/IEC 18004 QR Code and Micro QR Code symbols and ISO/IEC 23941 rMQR symbols in pure Rust, then renders them as grayscale, PNG and SVG images.
