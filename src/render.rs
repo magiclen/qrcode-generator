@@ -124,7 +124,7 @@ impl<'a> Renderer<'a> {
 
     /// Writes an SVG document to a writer.
     ///
-    /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
+    /// The description is written as XML text; markup characters are escaped and characters that XML 1.0 does not allow are replaced with U+FFFD.
     /// Pass `None::<&str>` when no description is needed.
     #[cfg(feature = "std")]
     pub fn write_svg<W: IoWrite>(
@@ -148,7 +148,7 @@ impl<'a> Renderer<'a> {
 
     /// Renders an SVG document as a UTF-8 string.
     ///
-    /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
+    /// The description is written as XML text; markup characters are escaped and characters that XML 1.0 does not allow are replaced with U+FFFD.
     /// Pass `None::<&str>` when no description is needed.
     pub fn to_svg_string(
         self,
@@ -183,7 +183,7 @@ impl<'a> Renderer<'a> {
         if let Some(description) = description {
             if !description.is_empty() {
                 writer.write_str("\t<desc>")?;
-                writer.write_str(&html_escape::encode_safe(description))?;
+                write_xml_text(writer, description)?;
                 writer.write_str("</desc>\n")?;
             }
         } else {
@@ -240,7 +240,7 @@ impl<'a> Renderer<'a> {
     #[cfg(feature = "tokio")]
     /// Renders an SVG document in memory, then writes and flushes it to a tokio asynchronous writer.
     ///
-    /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
+    /// The description is written as XML text; markup characters are escaped and characters that XML 1.0 does not allow are replaced with U+FFFD.
     /// Pass `None::<&str>` when no description is needed.
     pub async fn write_svg_async<W: TokioAsyncWrite + Unpin>(
         self,
@@ -257,7 +257,7 @@ impl<'a> Renderer<'a> {
 
     /// Atomically saves an SVG document after rendering succeeds.
     ///
-    /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
+    /// The description is written as XML text; markup characters are escaped and characters that XML 1.0 does not allow are replaced with U+FFFD.
     /// Pass `None::<&str>` when no description is needed.
     #[cfg(feature = "std")]
     pub fn save_svg(
@@ -279,7 +279,7 @@ impl<'a> Renderer<'a> {
     /// Atomically saves an SVG document after rendering succeeds, offloading the write to tokio's blocking pool.
     ///
     /// Like [`save_svg`](Self::save_svg), the write goes through a temporary file, so an existing file is left untouched if it fails.
-    /// The description must contain only characters allowed by XML 1.0; markup characters are escaped, but callers must remove or replace disallowed XML characters before rendering.
+    /// The description is written as XML text; markup characters are escaped and characters that XML 1.0 does not allow are replaced with U+FFFD.
     /// Pass `None::<&str>` when no description is needed.
     pub async fn save_svg_async(
         self,
@@ -455,6 +455,32 @@ impl fmt::Display for Renderer<'_> {
 
         Ok(())
     }
+}
+
+// Writes text as XML 1.0 character data.
+// Characters that XML 1.0 does not allow, even as character references, are replaced with U+FFFD.
+fn write_xml_text<W: fmt::Write>(writer: &mut W, text: &str) -> fmt::Result {
+    let mut start = 0;
+
+    for (index, c) in text.char_indices() {
+        let replacement = match c {
+            '&' => "&amp;",
+            '<' => "&lt;",
+            // Escaping `>` keeps `]]>` out of the character data.
+            '>' => "&gt;",
+            // A literal CR would be normalized to LF by XML parsers.
+            '\r' => "&#xD;",
+            '\t' | '\n' => continue,
+            '\u{0}'..='\u{1F}' | '\u{FFFE}' | '\u{FFFF}' => "\u{FFFD}",
+            _ => continue,
+        };
+
+        writer.write_str(&text[start..index])?;
+        writer.write_str(replacement)?;
+        start = index + c.len_utf8();
+    }
+
+    writer.write_str(&text[start..])
 }
 
 #[cfg(feature = "std")]

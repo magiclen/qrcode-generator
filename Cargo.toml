@@ -1,6 +1,6 @@
 [package]
 name = "qrcode-generator"
-version = "6.1.1"
+version = "6.1.2"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2024"
 rust-version = "1.89"
@@ -14,7 +14,6 @@ include = ["/src/**/*", "!/src/**/*_tests.rs", "/Cargo.toml", "/README.md", "/LI
 
 [dependencies]
 atomic-write-file = { version = "0.3", optional = true }
-html-escape = { version = "0.2", default-features = false }
 
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 
@@ -32,7 +31,7 @@ tokio = { version = "1", default-features = false, features = ["rt", "macros", "
 [features]
 default = ["std", "qr", "image"]
 
-std = ["dep:atomic-write-file", "html-escape/std", "url?/std"]
+std = ["dep:atomic-write-file", "url?/std"]
 
 image = ["std", "dep:image"]
 tokio = ["std", "dep:tokio"]

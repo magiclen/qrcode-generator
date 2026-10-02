@@ -144,6 +144,8 @@ fn svg_memory_rendering_accepts_all_description_forms() {
 
     let owned = renderer.to_svg_string(Some(String::from("<&>"))).unwrap();
     assert!(owned.contains("<desc>&lt;&amp;&gt;</desc>"));
+    let controls = renderer.to_svg_string(Some("\u{0}\u{1B}\r\u{FFFF}")).unwrap();
+    assert!(controls.contains("<desc>\u{FFFD}\u{FFFD}&#xD;\u{FFFD}</desc>"));
     assert!(renderer.to_svg_string(Some("plain")).unwrap().contains("<desc>plain</desc>"));
     assert!(renderer.to_svg_string(None::<&str>).unwrap().contains("by magiclen.org</desc>"));
 }
